@@ -1,0 +1,33 @@
+# Fly.io — https://fly.io/docs/reference/configuration/
+# Deploy:  fly launch --no-deploy   (then edit app name below)
+#          fly secrets set MONGO_URI="..." ADMIN_TOKEN="$(openssl rand -hex 24)"
+#          fly deploy
+app = "betting-oracle"
+primary_region = "cdg"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+  TIMEZONE = "Europe/Paris"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

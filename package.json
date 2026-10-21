@@ -1,0 +1,26 @@
+{
+  "name": "betting-oracle",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MERN + Gemini AI live sports prediction app (football, basketball, hockey)",
+  "scripts": {
+    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "dev": "concurrently -n SERVER,CLIENT -c cyan,magenta \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix client install && npm --prefix client run build",
+    "start": "NODE_ENV=production node server/src/index.js",
+    "mongo:up": "docker run -d --name betting-mongo -p 27017:27017 -v betting-mongo-data:/data/db mongo:7",
+    "mongo:start": "docker start betting-mongo",
+    "mongo:stop": "docker stop betting-mongo",
+    "serve": "npm run build && npm start",
+    "docker:build": "docker build -t betting-oracle .",
+    "docker:run": "docker run --rm -p 5000:5000 --env-file server/.env -e NODE_ENV=production betting-oracle"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

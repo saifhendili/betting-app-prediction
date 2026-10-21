@@ -1,0 +1,25 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+# Deploy: push this repo to GitHub, then New → Blueprint and pick it.
+services:
+  - type: web
+    name: betting-oracle
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set these in the Render dashboard, not here — they are secrets.
+      - key: MONGO_URI
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true
+      # Optional: keys can instead be entered in the app's Settings panel,
+      # which stores them in MongoDB.
+      - key: GEMINI_API_KEYS
+        sync: false
+      - key: SPORTS_API_KEYS
+        sync: false
+      - key: TIMEZONE
+        value: Europe/Paris
