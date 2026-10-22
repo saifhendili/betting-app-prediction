@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { env, SPORTS } from '../config/env.js';
 import { isMongoUp } from '../db/connect.js';
-import { sportsKeys, sportsUsage } from '../services/sportsApi/index.js';
+import { sportsKeys, sportsUsage, describeSource } from '../services/sportsApi/index.js';
 import { geminiKeys, geminiUsage } from '../services/gemini/client.js';
 import { cacheStats } from '../services/cache.js';
 import { windowList } from '../services/gamesService.js';
@@ -11,12 +11,15 @@ export const healthRouter = Router();
 
 healthRouter.get('/', (_req, res) => {
   const geminiOk = geminiKeys.available().length > 0;
-  const sportsOk = sportsKeys.available().length > 0;
+  const source = describeSource();
+  // ESPN needs no key, so sports data is healthy whenever it is the feed.
+  const sportsOk = source.effective === 'espn' || sportsKeys.available().length > 0;
   res.json({
     status: sportsOk ? 'ok' : 'degraded',
     time: new Date().toISOString(),
     timezone: env.timezone,
     mongo: isMongoUp() ? 'connected' : 'offline (in-memory cache)',
+    dataSource: source,
     sportsData: sportsOk ? 'ok' : sportsKeys.size ? 'all keys rate-limited' : 'no key configured',
     ai: geminiOk ? 'ok' : geminiKeys.size ? 'all keys rate-limited' : 'no key configured (model-only predictions)',
     cache: cacheStats(),
@@ -27,6 +30,7 @@ healthRouter.get('/', (_req, res) => {
 healthRouter.get('/keys', (_req, res) => {
   res.json({
     gemini: { ...geminiKeys.health(), usage: geminiUsage(), model: env.gemini.model, fallbacks: env.gemini.fallbackModels },
+    dataSource: describeSource(),
     sports: {
       ...sportsKeys.health(),
       usage: sportsUsage(),
@@ -50,6 +54,11 @@ healthRouter.get('/meta', (_req, res) => {
       tagline: p.tagline,
       description: p.description,
     })),
-    config: { marketWeight: env.marketWeight, oddsEnabled: env.enableOdds, timezone: env.timezone },
+    config: {
+      marketWeight: env.marketWeight,
+      oddsEnabled: env.enableOdds,
+      timezone: env.timezone,
+      dataSource: describeSource(),
+    },
   });
 });

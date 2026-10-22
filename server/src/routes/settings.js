@@ -56,7 +56,7 @@ settingsRouter.put('/', requireAdmin, async (req, res, next) => {
         patch[field] = value;
       }
     }
-    for (const field of ['geminiModel', 'sportsProvider', 'marketWeight', 'enableOdds']) {
+    for (const field of ['geminiModel', 'sportsProvider', 'dataSource', 'marketWeight', 'enableOdds']) {
       if (field in body) patch[field] = body[field];
     }
 

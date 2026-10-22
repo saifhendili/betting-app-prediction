@@ -12,6 +12,7 @@ const schema = new mongoose.Schema(
     sportsKeys: { type: [String], default: [] },
     geminiModel: { type: String, default: null },
     sportsProvider: { type: String, default: null },
+    dataSource: { type: String, default: null }, // 'espn' | 'apisports'
     marketWeight: { type: Number, default: null },
     enableOdds: { type: Boolean, default: null },
     timezone: { type: String, default: null },

@@ -3,8 +3,10 @@ import { api } from './api.js';
 import { Segmented } from './components/Controls.jsx';
 import { GameList } from './components/GameList.jsx';
 import { PredictionPanel } from './components/PredictionPanel.jsx';
-import { TopPicks } from './components/TopPicks.jsx';
+import { SuggestedBets } from './components/SuggestedBets.jsx';
 import { SettingsPanel } from './components/SettingsPanel.jsx';
+import { SavedPanel } from './components/SavedPanel.jsx';
+import { savedStore, useSaved, pickKey } from './storage.js';
 
 const SPORTS = [
   { key: 'football', label: 'Football', icon: '⚽' },
@@ -50,6 +52,11 @@ export default function App() {
   const [riskMeta, setRiskMeta] = useState([]);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [savedOpen, setSavedOpen] = useState(false);
+  const [topSavedAt, setTopSavedAt] = useState(null);
+  const saved = useSaved();
+  const savedKeys = useMemo(() => new Set(saved.picks.map((p) => p.key)), [saved.picks]);
+  const [topCount, setTopCount] = useState(10);
   const [topOpen, setTopOpen] = useState(false);
   const [topData, setTopData] = useState(null);
   const [topLoading, setTopLoading] = useState(false);
@@ -132,20 +139,52 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [risk]);
 
-  // ── top picks ────────────────────────────────────────────────────────────
+  // ── suggested bets ───────────────────────────────────────────────────────
+  // Live games are always included (the server reserves them up to half the
+  // slots); on the Live tab the suggestions are live-only.
   const loadTopPicks = useCallback(async () => {
     setTopOpen(true);
     setTopLoading(true);
     setTopError(null);
+    setTopSavedAt(null);
     try {
-      const data = await api.topPicks({ sport, window: window_ === 'live' ? '12h' : window_, risk, count: 5 });
+      const data = await api.topPicks({ sport, window: window_, risk, count: topCount });
       setTopData(data);
+      // every run is kept in this browser automatically
+      if (data?.predictions?.length) {
+        const run = savedStore.addRun({ sport, window: window_, risk, data });
+        setTopSavedAt(run.savedAt);
+      }
     } catch (err) {
       setTopError(err.message);
     } finally {
       setTopLoading(false);
     }
-  }, [sport, window_, risk]);
+  }, [sport, window_, risk, topCount]);
+
+  /** ☆ / ★ on any pick: save it, or remove it if it is already saved. */
+  const toggleSavePick = useCallback((prediction, pick) => {
+    const key = pickKey(prediction.game.gameKey, pick.id);
+    if (savedKeys.has(key)) savedStore.removePick(key);
+    else savedStore.addPick({ prediction, pick });
+  }, [savedKeys]);
+
+  /** Re-open a game from the saved list — fetches a fresh prediction for it. */
+  const openSavedGame = useCallback((g) => {
+    const game = {
+      sport: g.sport,
+      id: g.id,
+      gameKey: g.gameKey,
+      kickoff: g.kickoff,
+      state: g.state,
+      score: g.score || { home: null, away: null },
+      status: { short: g.statusShort, elapsed: g.minute },
+      league: { name: g.league },
+      teams: { home: { name: g.home, logo: g.homeLogo }, away: { name: g.away, logo: g.awayLogo } },
+    };
+    setSelected(game);
+    loadPrediction(game);
+  }, [loadPrediction]);
 
   const onSettingsSaved = useCallback(() => {
     api.health().then(setHealth).catch(() => {});
@@ -178,9 +217,10 @@ export default function App() {
             type="button"
             className={`chip clickable ${health?.sportsData === 'ok' ? 'ok' : 'bad'}`}
             onClick={() => setSettingsOpen(true)}
-            title={health?.sportsData || 'sports data status'}
+            title={health?.dataSource?.reason || health?.sportsData || 'sports data status'}
           >
-            <span className="dot" />data
+            <span className="dot" />
+            {health?.dataSource?.effective === 'apisports' ? 'API-SPORTS' : 'ESPN'}
           </button>
           <button
             type="button"
@@ -193,6 +233,9 @@ export default function App() {
           <span className={`chip ${health?.mongo === 'connected' ? 'ok' : 'warn'}`} title={health?.mongo}>
             <span className="dot" />db
           </span>
+          <button type="button" className="btn saved-btn" onClick={() => setSavedOpen(true)} title="Saved bets and suggestion history">
+            📁 Saved <span className="count">{saved.picks.length}</span>
+          </button>
           <button type="button" className="icon-btn" onClick={() => setSettingsOpen(true)} title="Settings — API keys">
             ⚙️
           </button>
@@ -211,9 +254,25 @@ export default function App() {
         <div className="control-row">
           <span className="control-label">Risk</span>
           <Segmented options={RISKS} value={risk} onChange={setRisk} prefix="risk-" />
-          <button type="button" className="btn primary" onClick={loadTopPicks} style={{ marginLeft: 'auto' }}>
-            ⭐ Best bets
-          </button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <label htmlFor="top-count" style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+              how many
+            </label>
+            <select
+              id="top-count"
+              className="mini-select"
+              value={topCount}
+              onChange={(e) => setTopCount(Number(e.target.value))}
+              title="How many games to analyse"
+            >
+              {[5, 10, 15, 20, 25].map((n) => (
+                <option key={n} value={n}>{n} games</option>
+              ))}
+            </select>
+            <button type="button" className="btn primary" onClick={loadTopPicks}>
+              💡 Suggested bets
+            </button>
+          </div>
         </div>
         {activeRisk ? <p className="risk-note">{activeRisk.description}</p> : null}
       </div>
@@ -246,17 +305,21 @@ export default function App() {
         <SettingsPanel onClose={() => setSettingsOpen(false)} onSaved={onSettingsSaved} />
       ) : null}
 
+      {savedOpen ? <SavedPanel onClose={() => setSavedOpen(false)} onOpenGame={openSavedGame} /> : null}
+
       {topOpen ? (
-        <TopPicks
+        <SuggestedBets
           data={topData}
           loading={topLoading}
           error={topError}
+          savedAt={topSavedAt}
+          savedKeys={savedKeys}
+          onToggleSave={toggleSavePick}
           onClose={() => setTopOpen(false)}
           onSelectGame={(p) => {
             setSelected(p.game);
             setPrediction(p);
             setPredError(null);
-            setTopOpen(false);
           }}
         />
       ) : null}
@@ -298,6 +361,8 @@ export default function App() {
           </div>
           <div className="panel-scroll">
             <PredictionPanel
+              savedKeys={savedKeys}
+              onToggleSave={toggleSavePick}
               prediction={prediction}
               loading={predLoading}
               error={predError}

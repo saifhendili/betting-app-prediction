@@ -16,6 +16,7 @@ export function SettingsPanel({ onClose, onSaved }) {
   const [sportsText, setSportsText] = useState('');
   const [model, setModel] = useState(GEMINI_MODELS[0]);
   const [provider, setProvider] = useState('apisports');
+  const [dataSource, setDataSource] = useState('espn');
 
   const [token, setToken] = useState(() => adminToken.get());
   const [loading, setLoading] = useState(true);
@@ -31,6 +32,7 @@ export function SettingsPanel({ onClose, onSaved }) {
         setSettings(s);
         setModel(s.gemini.model || GEMINI_MODELS[0]);
         setProvider(s.sports.provider || 'apisports');
+        setDataSource(s.sports.dataSource?.configured || 'espn');
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -42,7 +44,7 @@ export function SettingsPanel({ onClose, onSaved }) {
     setMessage(null);
     adminToken.set(token.trim());
     try {
-      const patch = { geminiModel: model, sportsProvider: provider };
+      const patch = { geminiModel: model, sportsProvider: provider, dataSource };
       // An untouched box means "leave what is already stored alone".
       if (geminiText.trim()) patch.geminiKeys = toLines(geminiText);
       if (sportsText.trim()) patch.sportsKeys = toLines(sportsText);
@@ -146,8 +148,28 @@ export function SettingsPanel({ onClose, onSaved }) {
 
               {/* ── Sports data ──────────────────────────────────────── */}
               <div className="field">
+                <label htmlFor="data-source">
+                  Sports data source
+                  <span className="field-hint">
+                    {settings?.sports.dataSource?.fellBack
+                      ? `using ESPN — ${settings.sports.dataSource.reason}`
+                      : `currently using ${settings?.sports.dataSource?.effective === 'apisports' ? 'API-SPORTS' : 'ESPN'}`}
+                  </span>
+                </label>
+                <select id="data-source" value={dataSource} onChange={(e) => setDataSource(e.target.value)}>
+                  <option value="espn">ESPN — free, no key, no daily limit, live in-play odds</option>
+                  <option value="apisports">API-SPORTS — needs a key (100 requests/day on the free plan)</option>
+                </select>
+                <p className="field-note">
+                  ESPN covers football worldwide, NBA/WNBA/college basketball and the NHL, with DraftKings prices on
+                  every fixture a bookmaker offers. If API-SPORTS is selected but its key is missing, used up or
+                  suspended, the app switches to ESPN on its own.
+                </p>
+              </div>
+
+              <div className="field">
                 <label htmlFor="sports-keys">
-                  Sports data API keys
+                  API-SPORTS keys <span style={{ fontWeight: 500, color: 'var(--text-faint)' }}>(only for the API-SPORTS source)</span>
                   <span className="field-hint">
                     {settings?.sports.count
                       ? `${settings.sports.count} saved (${settings.sports.source}): ${settings.sports.masked.join(', ')}`

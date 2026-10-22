@@ -30,8 +30,10 @@ If Gemini is unavailable the app degrades to a pure statistical prediction inste
 | **Risk profiles** | Easy (high hit-rate, ~1.1–1.7) · Mid (main lines, ~1.4–2.6) · Aggressive (value hunting, 1.8+) |
 | **Live games** | Probabilities are **rebased on the scoreline and time remaining**, not pre-match numbers |
 | **Markets** | Match winner, double chance, over/under (every line the book prices), handicap, BTTS, correct score |
-| **Best bets** | One click analyses the top games on the slate and ranks them by confidence |
-| **Many API keys** | Both Gemini and the sports feed take a comma-separated list of keys, rotated automatically |
+| **Suggested bets** | One click analyses 5–25 games — **live and upcoming** — and gives each a best bet plus its other options |
+| **Saved results** | Every suggestions run is saved automatically, and any bet can be starred ☆; both live in your browser (localStorage) |
+| **Data** | ESPN by default — no key, no daily limit, DraftKings odds including **live in-play prices**. API-SPORTS optional |
+| **Many API keys** | Gemini (and API-SPORTS, if used) take any number of keys, rotated automatically |
 
 ---
 
@@ -59,9 +61,8 @@ applies them immediately without a restart.
 **Gemini** — https://aistudio.google.com/apikey → create API key. Free tier, no card.
 Paste **several, one per line**; they are rotated, so N keys ≈ N× the free daily quota.
 
-**Sports data** — https://dashboard.api-football.com/register → free plan.
-One account gives **100 requests/day for each** of football, basketball and hockey.
-Pick the "RapidAPI" source in the panel only if your key came from RapidAPI.
+**Sports data** — nothing to do. The default source is ESPN's public scoreboard, which needs no key.
+(API-SPORTS is available as an alternative in Settings; see *Data sources* below.)
 
 Hit **Test keys** first if you want to confirm they work — it checks each one against Google and the
 sports provider and reports the plan and quota used, without spending any generation quota. Then
@@ -87,6 +88,54 @@ survive a restart (the panel tells you when that's the case, and `.env` is the d
 For production, see **Hosting** below — one process serves both the UI and the API.
 
 ---
+
+## Data sources
+
+| | ESPN (default) | API-SPORTS (optional) |
+|---|---|---|
+| Key | none | required |
+| Limits | none | free plan: 100 requests/day, 10/minute |
+| Coverage | football worldwide, NBA, WNBA, NCAA men's basketball, NHL | football, basketball and hockey worldwide |
+| Odds | DraftKings, on every fixture they price, **including live in-play prices** | many books, pre-match only |
+| Team statistics | no | paid plans only (the free plan blocks the current season) |
+
+ESPN's scoreboard is ESPN's own site API rather than a documented public product. It has been stable
+for years, but it can change without notice — which is one reason API-SPORTS is kept as an option.
+
+If API-SPORTS is selected and its key turns out missing, exhausted or **suspended**, the app hands over
+to ESPN by itself and says so in `/api/health` and the Settings panel, rather than showing no games.
+
+Fixtures no bookmaker prices — friendlies, youth and minor leagues — are still listed (marked
+*no odds*), but they are skipped by Suggested bets: with no prices and no team statistics the model
+can only produce a league-average guess.
+
+### Live betting
+
+For a game in progress the model is **pre-match team strength, rebased on the score and the time
+left**, and it is compared against the bookmaker's **current in-play price** — so the edge column shows
+the gap to a price you could actually take now. When a fixture has no in-play market, the pre-match
+price is still shown (greyed, as "pre 1.91") but never treated as bettable or used for ranking.
+
+Goal timing matters here. Scaling the remaining expectation linearly by the clock is wrong: about 45%
+of goals come in the first half and 55% in the second, and added time makes a match ~98 minutes long.
+Measured against DraftKings' live totals across 16 in-play games, the linear version under-priced
+every Over, by 9 percentage points on average — it would have suggested an Under on almost every live
+game. With the timing model the average gap is ~1pp, with disagreements on both sides.
+
+## Suggested bets & saved results
+
+**💡 Suggested bets** picks the strongest priced games in the current window and returns, for each, a
+best bet for your risk level plus the other options (tap *+N more bet options*). Live games are
+always included — up to half the slots when any are on — and on the *Live* tab the list is live-only.
+Choose how many games (5–25) next to the button.
+
+**Saving** happens in your browser (localStorage), nothing on the server:
+
+- every suggestions run is saved automatically — *📁 Saved → Suggestion history*
+- tap ☆ on any bet, in Suggested bets or in a game's analysis, to keep it in *📁 Saved → Saved bets*
+
+Each entry records the game as it was when saved — including the score and minute of a live game —
+with the pick, its probability and the price. *Open* fetches a fresh prediction for that game.
 
 ## Hosting
 
@@ -144,9 +193,9 @@ fallback if you prefer them in the environment.
   require an `x-admin-token` header; the Settings panel shows a field for it and remembers it in that
   browser. Reading games and predictions stays public — that's the app itself. The server logs a
   warning on boot if `NODE_ENV=production` and no token is set.
-- **Your upstream quota is shared by every visitor.** 100 sports requests/day total, not per user.
-  Caching absorbs most of it (the slate is one request per 15 minutes) but each *new* prediction
-  costs ~3. A public instance will exhaust a free plan quickly; add more keys or keep the URL private.
+- **Your Gemini quota is shared by every visitor.** Each new prediction is one Gemini call. With ESPN
+  as the data source there is no sports quota to worry about; with API-SPORTS, 100 requests/day are
+  shared across all users.
 - **Lock down MongoDB.** Use a strong password and restrict the Atlas IP allowlist to your host rather
   than `0.0.0.0/0`.
 - `server/.env` is gitignored — keep it that way, and set secrets through your host's dashboard.
@@ -242,11 +291,12 @@ The upstream feeds are mocked, so the whole pipeline can be exercised for free.
 
 ```bash
 cd server
-./test/smoke.sh        # 44 end-to-end checks, no API quota consumed
+./test/smoke.sh        # 68 end-to-end checks, no API quota consumed
 ```
 
 It covers every sport × risk combination, the time-window filters, the in-play rebasing, the
-settings API, the admin-token gate, and the invariants that matter (fair odds = 1/p, 1X2 sums to 1,
+settings API, the admin-token gate, the ESPN feed, the fallback from a suspended API-SPORTS key,
+the goal-timing model, and the invariants that matter (fair odds = 1/p, 1X2 sums to 1,
 no contradictory picks, no settled markets).
 
 To poke at it by hand:
@@ -262,9 +312,9 @@ curl "localhost:5056/api/health/keys"                 # watch the pool bench the
 
 ---
 
-## What the free sports plan actually allows
+## What the free API-SPORTS plan actually allows
 
-Worth knowing before you judge the predictions. On the API-SPORTS **free** plan, the *current season*
+Only relevant if you switch the data source to API-SPORTS. Worth knowing before you judge the predictions. On the API-SPORTS **free** plan, the *current season*
 is not readable — only seasons 2022–2024 — and the `last` parameter is blocked entirely. Measured
 against a live key:
 
@@ -299,9 +349,12 @@ request — without that, four doomed calls per prediction would eat most of a 1
 - **No injury, lineup, suspension, weather or motivation data.** The feed doesn't provide it on the
   free plan, and Gemini is explicitly instructed not to invent it. This is the single biggest gap
   between these numbers and a sharp bettor's.
-- **No in-play odds.** `/odds` returns pre-match prices only. For a game under way the app therefore
-  uses them to fit relative strength but never blends them with the in-play model or computes an edge
-  against them — a stale quote does not know the score.
+- **In-play odds depend on the bookmaker quoting the game.** ESPN carries DraftKings' live prices when
+  they exist; when a game has none (and always on API-SPORTS, which is pre-match only), the pre-match
+  price is used to fit team strength but never blended with the in-play model, ranked on, or shown as
+  bettable — a stale quote does not know the score.
+- **One bookmaker on ESPN.** DraftKings only, so there is no cross-book consensus; the de-vig still
+  removes its margin.
 - **The bookmaker margin means no model wins long term.** The honest `ev` figure is usually
   negative. A positive `evModel` is a hypothesis, not a guarantee.
 - **100 requests/day/sport** on the free plan goes quickly. Watch `/api/health/keys`.

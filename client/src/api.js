@@ -68,7 +68,7 @@ export const api = {
     if (refresh) q.set('refresh', '1');
     return request(`/predictions/${sport}/${id}?${q}`, opts);
   },
-  topPicks: ({ sport, window, risk, count = 5 }, opts) => {
+  topPicks: ({ sport, window, risk, count = 8 }, opts) => {
     const q = new URLSearchParams({ sport, window, risk, count: String(count) });
     return request(`/predictions/top?${q}`, opts);
   },

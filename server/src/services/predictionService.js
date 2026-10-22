@@ -30,11 +30,30 @@ async function safe(promise, fallback = null) {
   }
 }
 
-export async function predict({ sport, gameId, risk = 'mid', refresh = false }) {
+/**
+ * @param preloadedGame  A game object already fetched by the caller (the slate
+ *   listing has one for every fixture). Passing it saves a whole upstream
+ *   request per prediction — on a 100/day plan that is the difference between
+ *   5 bulk predictions and 15.
+ * @param lean  Skip the optional head-to-head fetch. Used for bulk runs, where
+ *   breadth matters more than the extra context for the AI narrative.
+ */
+export async function predict({
+  sport,
+  gameId,
+  risk = 'mid',
+  refresh = false,
+  preloadedGame = null,
+  lean = false,
+}) {
   const profile = RISK_PROFILES[risk] ? risk : 'mid';
-  const api = adapter(sport);
+  // route by id: an ESPN game is always predicted from ESPN, whatever the
+  // listing source is set to now
+  const api = adapter(sport, { gameId });
 
-  const raw = await api.getGame(gameId);
+  // Reuse the caller's copy when it is the same fixture and still fresh enough.
+  const raw =
+    preloadedGame && String(preloadedGame.id) === String(gameId) ? preloadedGame : await api.getGame(gameId);
   const game = raw ? annotateTier([raw])[0] : null;
   if (!game) {
     const err = new Error(`No ${sport} game found with id ${gameId}.`);
@@ -42,7 +61,10 @@ export async function predict({ sport, gameId, risk = 'mid', refresh = false }) 
     throw err;
   }
 
-  const cacheKey = `pred:v3:${sport}:${gameId}:${profile}:${game.state}`;
+  // a goal must invalidate a live prediction immediately, so the score is part
+  // of the key while the game is on
+  const scoreKey = game.state === 'live' ? `:${game.score.home ?? 0}-${game.score.away ?? 0}` : '';
+  const cacheKey = `pred:v4:${sport}:${gameId}:${profile}:${game.state}${scoreKey}`;
   if (!refresh) {
     const hit = await cacheGet(cacheKey);
     if (hit) return { ...hit, cached: true };
@@ -56,14 +78,22 @@ export async function predict({ sport, gameId, risk = 'mid', refresh = false }) 
     safe(api.teamStats({ leagueId, season, teamId: game.teams.away.id })),
   ]);
 
-  const [h2h, homeRecent, awayRecent, rawOdds] = await Promise.all([
-    safe(api.headToHead(game.teams.home.id, game.teams.away.id), []),
+  const isLive = game.state === 'live';
+  const wantOdds = env.enableOdds && game.state !== 'finished';
+
+  const [h2h, homeRecent, awayRecent, rawOdds, rawLiveOdds] = await Promise.all([
+    lean ? Promise.resolve([]) : safe(api.headToHead(game.teams.home.id, game.teams.away.id), []),
     safe(api.recentGames(game.teams.home.id, 6), []),
     safe(api.recentGames(game.teams.away.id, 6), []),
-    env.enableOdds && game.state !== 'finished' ? safe(api.odds(gameId), null) : Promise.resolve(null),
+    wantOdds ? safe(api.odds(gameId, { snapshot: 'prematch' }), null) : Promise.resolve(null),
+    // In-play prices exist only on feeds that carry them (ESPN does).
+    wantOdds && isLive && api.supportsLiveOdds ? safe(api.odds(gameId, { snapshot: 'current' }), null) : Promise.resolve(null),
   ]);
 
+  // Pre-match prices: what team strength is fitted to, even for a live game.
   const market = rawOdds ? parseOdds(rawOdds, { sport }) : null;
+  // In-play prices: what a live bet can actually be placed at right now.
+  const liveMarket = rawLiveOdds ? parseOdds(rawLiveOdds, { sport }) : null;
 
   // ── pick a model source ─────────────────────────────────────────────────
   // Team statistics are the best input, but they are unavailable on API-SPORTS
@@ -95,23 +125,30 @@ export async function predict({ sport, gameId, risk = 'mid', refresh = false }) 
   model.source = modelSource;
 
   // ── candidates → risk ranking ────────────────────────────────────────────
-  // Odds from /odds are pre-match; for a game already under way they must not
-  // be blended with the in-play model (see buildCandidates).
-  const staleMarket = game.state === 'live';
+  // Which prices the picks are compared against:
+  //   upcoming            → pre-match prices
+  //   live + in-play odds → the in-play prices (both sides know the score)
+  //   live, no in-play    → pre-match prices shown for reference only; they
+  //                         don't know the score, so they are not blended in
+  const pickMarket = isLive && liveMarket ? liveMarket : market;
+  const marketKind = !pickMarket ? 'none' : isLive ? (liveMarket ? 'inplay' : 'stale-prematch') : 'prematch';
+  const staleMarket = marketKind === 'stale-prematch';
+
   const candidates = buildCandidates({
     model,
-    market,
+    market: pickMarket,
     weight: env.marketWeight,
     teams: game.teams,
     staleMarket,
   });
-  const shortlist = rankForRisk(candidates, profile, { model, market, limit: 5 });
+  const shortlist = rankForRisk(candidates, profile, { model, market: pickMarket, limit: 5 });
 
   // ── AI layer ─────────────────────────────────────────────────────────────
   const { ai, picks, degraded, error } = await analyse({
     game,
     model,
-    market,
+    market: pickMarket,
+    marketKind,
     picks: shortlist,
     risk: profile,
     h2h,
@@ -154,23 +191,32 @@ export async function predict({ sport, gameId, risk = 'mid', refresh = false }) 
     topPick: top || null,
     picks,
     model,
-    market,
+    // the prices the picks were compared with (in-play for a live game when
+    // the feed has them), plus the pre-match ones the model was fitted to
+    market: pickMarket,
+    prematchMarket: market,
     ai,
     dataSource: {
+      feed: game.source || 'apisports',
+      provider: pickMarket?.bookmakers?.[0] || null,
       model: modelSource,
-      marketIsStale: staleMarket && Boolean(market),
+      marketKind,
+      marketIsStale: staleMarket,
+      liveOdds: marketKind === 'inplay',
       label:
         modelSource === 'team-stats'
           ? 'Team statistics + bookmaker market'
           : modelSource === 'market-implied'
-            ? 'Bookmaker market only (no team stats on your API plan)'
-            : 'League priors only (no team stats and no odds available)',
-      canFindValue: modelSource === 'team-stats',
+            ? 'Bookmaker market (no team statistics available)'
+            : 'League averages only (this fixture has no odds)',
+      // In-play, the model (pre-match strength rebased on the score) and the
+      // live market are genuinely independent views, so a gap is meaningful.
+      canFindValue: modelSource === 'team-stats' || marketKind === 'inplay',
       note:
-        modelSource === 'market-implied'
-          ? 'Your sports API plan does not expose current-season team statistics, so these probabilities are the bookmakers\' own view, re-fitted into a full scoring model. That makes every market consistent and fills in lines the book did not price — but it cannot disagree with the market, so no genuine value edge is available from this data alone.'
+        modelSource === 'market-implied' && marketKind !== 'inplay'
+          ? 'No team statistics are available from the data source, so these probabilities are the bookmaker\'s own view, re-fitted into a full scoring model. That makes every market consistent and fills in lines the book did not price — but it cannot disagree with the market, so no genuine value edge is available pre-match.'
           : modelSource === 'priors-only'
-            ? 'Neither team statistics nor odds were available for this game, so the model is running on generic league averages. Treat this prediction as near-worthless.'
+            ? 'No bookmaker prices this fixture (typical for friendlies and minor leagues) and no team statistics are available, so the model is running on generic league averages. Treat this prediction as near-worthless.'
             : null,
       planRestrictions: planRestrictions(),
     },

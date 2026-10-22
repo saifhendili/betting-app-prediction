@@ -121,7 +121,7 @@ export async function listGames({ sport = 'football', window = 'today', includeF
 }
 
 export async function getGame({ sport, gameId }) {
-  const game = await adapter(sport).getGame(gameId);
+  const game = await adapter(sport, { gameId }).getGame(gameId);
   if (!game) {
     const err = new Error(`No ${sport} game with id ${gameId}`);
     err.status = 404;

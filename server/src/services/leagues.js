@@ -23,7 +23,7 @@ const TIERS = [
       { name: /^uefa europa conference league$|^uefa conference league$/i },
       { name: /world cup/i },
       { name: /^euro(pean)? championship$/i },
-      { name: /copa libertadores/i },
+      { name: /libertadores/i },
       { name: /copa america/i },
       { name: /^nba$/i },
       { name: /^nhl$/i },
@@ -36,6 +36,8 @@ const TIERS = [
       { name: /champions league/i },        // continental variants (CAF, AFC, …)
       { name: /^eredivisie$/i },
       { name: /^primeira liga$/i },
+      { name: /sudamericana/i },
+      { name: /^saudi pro league$/i },
       { name: /^championship$/i, country: /^england$/i },
       { name: /^super ?lig$/i, country: /^t(ü|u)rkiye$|^turkey$/i },
       { name: /^(jupiler )?pro league$/i, country: /^belgium$/i },

@@ -285,7 +285,8 @@ export function basketballFromMarket(market) {
   const pHome = clamp(1 - 0.5 * (1 + erf(-margin / (sdMargin * Math.SQRT2))), 0.01, 0.99);
 
   const totalsOut = {};
-  const baseLine = Math.round(total * 2) / 2 + 0.5;
+  // always a half-point line: whole numbers can push, which the model doesn't price
+  const baseLine = Math.floor(total) + 0.5;
   [baseLine - 6, baseLine - 3, baseLine, baseLine + 3, baseLine + 6].forEach((line) => {
     const over = 1 - cdf(line, total, sdTotal);
     totalsOut[line] = { over, under: 1 - over };

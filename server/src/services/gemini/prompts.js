@@ -56,7 +56,7 @@ export const RESPONSE_SCHEMA = {
   required: ['verdict', 'bestPickId', 'headline', 'confidence', 'reasoning', 'risks'],
 };
 
-export function buildPrompt({ game, model, market, candidates, risk, h2h, recent }) {
+export function buildPrompt({ game, model, market, marketKind = 'prematch', candidates, risk, h2h, recent }) {
   const profile = RISK_PROFILES[risk] || RISK_PROFILES.mid;
   const H = game.teams.home.name;
   const A = game.teams.away.name;
@@ -81,14 +81,22 @@ export function buildPrompt({ game, model, market, candidates, risk, h2h, recent
     );
     lines.push(
       `Therefore: do NOT say the model "does not know the score", and do NOT adjust a probability upward ` +
-        `merely because a team is leading — that is already priced in. Any bookmaker price shown is the ` +
-        `PRE-MATCH price (the feed has no in-play odds), so it is stale: use it only as background on ` +
-        `relative strength, never as evidence of value, and no edge is computed against it.`
+        `merely because a team is leading — that is already priced in.`
+    );
+    lines.push(
+      marketKind === 'inplay'
+        ? `The bookmaker prices below are LIVE IN-PLAY prices, quoted now, knowing the score. The model ` +
+            `(pre-match strength rebased on the scoreline) and this live market are independent views, so ` +
+            `a gap between them is a genuine signal worth discussing — but in-play markets react to things ` +
+            `the model cannot see (red cards, injuries, momentum), so treat large gaps with caution.`
+        : `Any bookmaker price shown is the PRE-MATCH price (no in-play odds were available), so it is ` +
+            `stale: use it only as background on relative strength, never as evidence of value, and no ` +
+            `edge is computed against it.`
     );
   }
 
   lines.push(`\n## Statistical model`);
-  if (model.source === 'market-implied') {
+  if (model.source === 'market-implied' && marketKind !== 'inplay') {
     lines.push(
       `IMPORTANT — this model was FITTED TO THE BOOKMAKER ODDS, because team statistics are not ` +
         `available on this API plan. The probabilities below therefore ARE the market's own view, ` +
@@ -150,7 +158,10 @@ export function buildPrompt({ game, model, market, candidates, risk, h2h, recent
   }
 
   if (market) {
-    lines.push(`\n## Bookmaker market (vig removed, median of ${market.bookmakerCount} book(s))`);
+    lines.push(
+      `\n## Bookmaker market — ${marketKind === 'inplay' ? 'LIVE IN-PLAY prices' : 'pre-match prices'} ` +
+        `(vig removed, ${market.bookmakers?.join(', ') || `${market.bookmakerCount} book(s)`})`
+    );
     if (market.moneyline) {
       lines.push(
         `Match winner: ${Object.entries(market.moneyline.probs)

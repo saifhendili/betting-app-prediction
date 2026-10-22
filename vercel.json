@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "betting-oracle": {
+      "root": ".",
+      "framework": "container",
+      "runtime": "container"
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": { "service": "betting-oracle" } }
+  ]
+}

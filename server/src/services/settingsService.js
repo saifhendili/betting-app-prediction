@@ -4,6 +4,7 @@ import { isMongoUp } from '../db/connect.js';
 import { maskKey } from './keyPool.js';
 import { geminiKeys } from './gemini/client.js';
 import { sportsKeys } from './sportsApi/client.js';
+import { describeSource } from './sportsApi/index.js';
 import { log } from '../utils/logger.js';
 
 /**
@@ -18,6 +19,7 @@ const current = {
   sportsKeys: null,
   geminiModel: null,
   sportsProvider: null,
+  dataSource: null,
   marketWeight: null,
   enableOdds: null,
 };
@@ -38,6 +40,7 @@ export function applySettings() {
 
   if (current.geminiModel) env.gemini.model = current.geminiModel;
   if (current.sportsProvider) env.sports.provider = current.sportsProvider;
+  if (current.dataSource) env.sports.dataSource = current.dataSource;
   if (Number.isFinite(current.marketWeight)) env.marketWeight = current.marketWeight;
   if (typeof current.enableOdds === 'boolean') env.enableOdds = current.enableOdds;
 }
@@ -52,6 +55,7 @@ export async function loadSettings() {
         current.sportsKeys = clean(doc.sportsKeys);
         current.geminiModel = doc.geminiModel || null;
         current.sportsProvider = doc.sportsProvider || null;
+        current.dataSource = ['espn', 'apisports'].includes(doc.dataSource) ? doc.dataSource : null;
         current.marketWeight = Number.isFinite(doc.marketWeight) ? doc.marketWeight : null;
         current.enableOdds = typeof doc.enableOdds === 'boolean' ? doc.enableOdds : null;
         log.ok(
@@ -77,6 +81,10 @@ export async function saveSettings(patch = {}) {
     const p = String(patch.sportsProvider || '').toLowerCase();
     current.sportsProvider = p === 'rapidapi' || p === 'apisports' ? p : null;
   }
+  if ('dataSource' in patch) {
+    const d = String(patch.dataSource || '').toLowerCase();
+    current.dataSource = d === 'espn' || d === 'apisports' ? d : null;
+  }
   if ('marketWeight' in patch) {
     const w = Number(patch.marketWeight);
     current.marketWeight = Number.isFinite(w) ? Math.min(1, Math.max(0, w)) : null;
@@ -96,6 +104,7 @@ export async function saveSettings(patch = {}) {
             sportsKeys: current.sportsKeys || [],
             geminiModel: current.geminiModel,
             sportsProvider: current.sportsProvider,
+            dataSource: current.dataSource,
             marketWeight: current.marketWeight,
             enableOdds: current.enableOdds,
           },
@@ -131,6 +140,7 @@ export function describeSettings() {
       masked: spt.map(maskKey),
       source: current.sportsKeys?.length ? 'settings' : env.sports.keys.length ? 'env' : 'none',
       provider: env.sports.provider,
+      dataSource: describeSource(),
     },
     options: { marketWeight: env.marketWeight, enableOdds: env.enableOdds, timezone: env.timezone },
     persistence: isMongoUp()

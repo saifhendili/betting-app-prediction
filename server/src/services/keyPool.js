@@ -131,6 +131,9 @@ export class KeyPool {
         benchedForSeconds: k.benchedUntil > now ? Math.ceil((k.benchedUntil - now) / 1000) : 0,
         lastUsed: k.lastUsed,
         lastError: k.lastError,
+        dayRemaining: k.dayRemaining ?? null,
+        dayLimit: k.dayLimit ?? null,
+        perMinuteLimit: k.rateLimitPerMin ?? null,
       })),
     };
   }

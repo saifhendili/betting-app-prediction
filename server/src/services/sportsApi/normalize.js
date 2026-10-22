@@ -33,16 +33,32 @@ export function makeGame({
   scoreAway = null,
   venue = null,
   round = null,
+  // Feeds that report their own lifecycle state (ESPN: pre/in/post) pass it in
+  // rather than having it guessed from status codes.
+  stateOverride = null,
+  // Minutes played on the sport's regulation clock, when the feed can compute
+  // it exactly. The in-play model prefers this over phase-based guesses.
+  elapsedMinutes = null,
+  source = 'apisports',
+  // Whether a bookmaker price exists. ESPN says so in the listing; for
+  // API-SPORTS it is unknown until odds are fetched, hence null.
+  hasOdds = null,
 }) {
-  const state = statusBucket(statusShort, statusLong);
+  const state = stateOverride || statusBucket(statusShort, statusLong);
   return {
     sport,
+    source,
     id: String(id),
     gameKey: `${sport}:${id}`,
     kickoff: kickoff ? new Date(kickoff).toISOString() : null,
     startsInMinutes: kickoff ? Math.round((new Date(kickoff).getTime() - Date.now()) / 60000) : null,
     state,
-    status: { short: statusShort || null, long: statusLong || null, elapsed },
+    status: {
+      short: statusShort || null,
+      long: statusLong || null,
+      elapsed,
+      elapsedMinutes: Number.isFinite(elapsedMinutes) ? elapsedMinutes : null,
+    },
     league: {
       id: league?.id != null ? String(league.id) : null,
       name: league?.name || 'Unknown league',
@@ -57,5 +73,6 @@ export function makeGame({
     },
     score: { home: scoreHome, away: scoreAway },
     venue,
+    hasOdds,
   };
 }

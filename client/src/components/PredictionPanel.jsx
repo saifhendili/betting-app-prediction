@@ -1,7 +1,8 @@
 import { pct, pp, odds, clockTime, dayLabel, confidenceBand, verdictLabel } from '../format.js';
 import { ConfidenceRing, ProbBar } from './Controls.jsx';
+import { pickKey } from '../storage.js';
 
-function Pick({ pick, marketDerived }) {
+function Pick({ pick, marketDerived, saved, onToggleSave }) {
   return (
     <div className={`pick ${pick.isTopPick ? 'top' : ''}`}>
       <div className="pick-head">
@@ -10,6 +11,17 @@ function Pick({ pick, marketDerived }) {
           <div className="selection">{pick.selection}</div>
         </div>
         {pick.isTopPick ? <span className="badge-top">BEST</span> : <span className="rank">#{pick.rank}</span>}
+        {onToggleSave ? (
+          <button
+            type="button"
+            className={`save-btn ${saved ? 'saved' : ''}`}
+            onClick={onToggleSave}
+            title={saved ? 'Saved — click to remove' : 'Save this bet'}
+            aria-pressed={saved}
+          >
+            {saved ? '★' : '☆'}
+          </button>
+        ) : null}
       </div>
 
       <ProbBar value={pick.probability} />
@@ -25,7 +37,17 @@ function Pick({ pick, marketDerived }) {
         </div>
         <div className="stat">
           <span>Book odds</span>
-          <strong>{pick.marketOdds ? odds(pick.marketOdds) : '—'}</strong>
+          <strong>
+            {pick.marketOdds ? (
+              odds(pick.marketOdds)
+            ) : pick.staleOdds ? (
+              <span title="Pre-match price — the game has started, so this price is no longer available" style={{ color: 'var(--text-faint)', fontSize: 12 }}>
+                pre {odds(pick.staleOdds)}
+              </span>
+            ) : (
+              '—'
+            )}
+          </strong>
         </div>
         <div className="stat">
           <span>{marketDerived ? 'Edge (n/a)' : 'Edge'}</span>
@@ -60,6 +82,7 @@ function ThreeWay({ prediction }) {
   const isFootball = sport === 'football';
   const mk = market?.moneyline?.probs;
   const isLive = Boolean(model.live);
+  const liveOdds = Boolean(prediction.dataSource?.liveOdds);
   const cells = [
     { label: game.teams.home.name, model: model.outcome.home, market: mk?.home },
     ...(isFootball ? [{ label: 'Draw', model: model.outcome.draw, market: mk?.draw }] : []),
@@ -73,12 +96,12 @@ function ThreeWay({ prediction }) {
             <span>{c.label}</span>
             <strong>{pct(c.model)}</strong>
             {Number.isFinite(c.market) ? (
-              <span className="vs-market">{isLive ? 'pre-match' : 'book'} {pct(c.market)}</span>
+              <span className="vs-market">{isLive ? (liveOdds ? 'live book' : 'pre-match') : 'book'} {pct(c.market)}</span>
             ) : null}
           </div>
         ))}
       </div>
-      {isLive && mk ? (
+      {isLive && mk && !liveOdds ? (
         <p style={{ fontSize: 11.5, color: 'var(--text-faint)', margin: '8px 0 0', lineHeight: 1.5 }}>
           The large figure is the live probability given the current score with {model.live.remainingMinutes}&apos;
           left. The smaller one is the <em>pre-match</em> price, shown for reference — the two are expected to
@@ -89,7 +112,7 @@ function ThreeWay({ prediction }) {
   );
 }
 
-export function PredictionPanel({ prediction, loading, error, onRefresh }) {
+export function PredictionPanel({ prediction, loading, error, onRefresh, savedKeys, onToggleSave }) {
   if (loading) {
     return (
       <div className="loading-box">
@@ -212,6 +235,13 @@ export function PredictionPanel({ prediction, loading, error, onRefresh }) {
 
       <div className="section">
         <h4>Recommended picks — {riskProfile.label.toLowerCase()} profile</h4>
+        {prediction.dataSource?.liveOdds ? (
+          <p style={{ fontSize: 11.5, color: 'var(--text-faint)', margin: '-2px 0 10px', lineHeight: 1.5 }}>
+            🔴 Book prices are {prediction.dataSource.provider || 'the bookmaker'}&apos;s <em>live in-play</em> odds,
+            quoted now with the current score — so the edge column compares the model with what you could bet at
+            right now.
+          </p>
+        ) : null}
         {prediction.dataSource?.marketIsStale ? (
           <p style={{ fontSize: 11.5, color: 'var(--text-faint)', margin: '-2px 0 10px', lineHeight: 1.5 }}>
             Book prices below are the <em>pre-match</em> ones — they do not know the current score, so they are
@@ -221,6 +251,8 @@ export function PredictionPanel({ prediction, loading, error, onRefresh }) {
         {picks.map((p) => (
           <Pick
             key={p.id}
+            saved={savedKeys?.has(pickKey(prediction.game.gameKey, p.id))}
+            onToggleSave={onToggleSave ? () => onToggleSave(prediction, p) : null}
             pick={p}
             marketDerived={prediction.dataSource?.canFindValue === false || prediction.dataSource?.marketIsStale}
           />

@@ -14,8 +14,30 @@ process.env.PORT = process.env.PORT || '5055';
 // directly, so it defaults to off — but an explicit value still wins, so the
 // gate itself can be tested.
 if (process.env.ADMIN_TOKEN === undefined) process.env.ADMIN_TOKEN = '';
+// The canned upstream has no rate limit, so the client-side throttle (which
+// exists purely to respect API-SPORTS' 10/min cap) must not pace the tests.
+// An explicit value still wins so the throttle itself can be exercised.
+if (process.env.SPORTS_RATE_PER_MINUTE === undefined) process.env.SPORTS_RATE_PER_MINUTE = '100000';
+// The main suite exercises the API-SPORTS path; the ESPN section of smoke.sh
+// overrides this.
+if (process.env.DATA_SOURCE === undefined) process.env.DATA_SOURCE = 'apisports';
 
-const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+// Mirrors the real API-SPORTS rate headers so the quota-tracking path is
+// exercised; a missing header must also be handled, which `jsonNoHeaders` covers.
+let fakeDayRemaining = 95;
+const json = (body) =>
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      'x-ratelimit-limit': '10',
+      'x-ratelimit-remaining': '9',
+      'x-ratelimit-requests-limit': '100',
+      'x-ratelimit-requests-remaining': String(Math.max(fakeDayRemaining--, 5)),
+    },
+  });
+const jsonNoHeaders = (body) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
 const wrap = (response) => ({ get: 'mock', parameters: {}, errors: [], results: Array.isArray(response) ? response.length : 1, response });
 
 const now = Date.now();
@@ -185,11 +207,20 @@ globalThis.fetch = async (input, init) => {
       '__FIRST__',
       ids[1] || ids[0] || 'unknown'
     );
-    return json(reply);
+    return jsonNoHeaders(reply);
   }
 
   // ── API-SPORTS ──
   if (url.includes('api-sports.io')) {
+    const apiKey = init?.headers?.['x-apisports-key'] || '';
+    if (apiKey.startsWith('suspended')) {
+      return jsonNoHeaders({
+        get: 'mock',
+        errors: { access: 'Your account is suspended, check on https://dashboard.api-football.com.' },
+        results: 0,
+        response: [],
+      });
+    }
     const u = new URL(url);
     const sport = url.includes('v3.football') ? 'football' : url.includes('v1.basketball') ? 'basketball' : 'hockey';
     const p = u.pathname;
@@ -232,7 +263,98 @@ globalThis.fetch = async (input, init) => {
     return json(wrap([]));
   }
 
+  // ── ESPN ──
+  if (url.includes('site.api.espn.com')) {
+    const path = new URL(url).pathname.replace('/apis/site/v2/sports/', '').replace(/\/scoreboard$/, '');
+    return jsonNoHeaders(espnBoard(path));
+  }
+
   return realFetch(input, init);
 };
+
+// ── canned ESPN scoreboards ─────────────────────────────────────────────────
+// One live and one upcoming priced game per sport, plus an un-priced football
+// fixture, in ESPN's real shape (American odds, open/close/current snapshots).
+const snap = (o) => ({ odds: o });
+const lineSnap = (line, o) => ({ line, odds: o });
+function espnOdds({ home, away, draw, total, spread, live = false }) {
+  const phase = (pre, cur) => (live ? { open: pre, close: pre, current: cur } : { open: pre, close: pre, current: pre });
+  return [
+    {
+      provider: { name: 'DraftKings' },
+      moneyline: {
+        home: phase(snap(home[0]), snap(home[1])),
+        away: phase(snap(away[0]), snap(away[1])),
+        ...(draw ? { draw: phase(snap(draw[0]), snap(draw[1])) } : {}),
+      },
+      total: {
+        over: phase(lineSnap(`o${total[0]}`, '-110'), lineSnap(`o${total[1]}`, '-115')),
+        under: phase(lineSnap(`u${total[0]}`, '-110'), lineSnap(`u${total[1]}`, '-105')),
+      },
+      pointSpread: {
+        home: phase(lineSnap(`${spread}`, '-110'), lineSnap(`${spread}`, '-120')),
+        away: phase(lineSnap(`${-spread > 0 ? '+' : ''}${-spread}`, '-110'), lineSnap(`${-spread > 0 ? '+' : ''}${-spread}`, '+100')),
+      },
+    },
+  ];
+}
+function espnEvent({ id, mins, state, period = 0, clock = 0, statusName, home, away, score = [0, 0], odds, league }) {
+  return {
+    id: String(id),
+    uid: `s:600~l:${league?.id || 1}~e:${id}`,
+    date: new Date(now + mins * 60000).toISOString(),
+    season: { year: 2026, slug: 'regular-season' },
+    links: league?.slug ? [{ href: `https://www.espn.com/soccer/team-stats/_/gameId/${id}/league/${league.slug}` }] : [],
+    status: { clock, displayClock: state === 'in' ? `${Math.floor(clock / 60)}'` : '0', period, type: { name: statusName, state, description: state === 'in' ? 'In Progress' : 'Scheduled', shortDetail: '' } },
+    competitions: [
+      {
+        altGameNote: league?.note || null,
+        competitors: [
+          { homeAway: 'home', score: String(score[0]), team: { id: `${id}1`, displayName: home, logo: null } },
+          { homeAway: 'away', score: String(score[1]), team: { id: `${id}2`, displayName: away, logo: null } },
+        ],
+        odds: odds || [null],
+        venue: { fullName: 'Mock Stadium' },
+      },
+    ],
+  };
+}
+const EPL = { id: 700, slug: 'eng.1' };
+function espnBoard(path) {
+  if (path === 'soccer/all') {
+    return {
+      events: [
+        espnEvent({ id: 9001, mins: -70, state: 'in', period: 2, clock: 63 * 60, statusName: 'STATUS_SECOND_HALF', home: 'Arsenal', away: 'Chelsea', score: [1, 0], league: EPL,
+          odds: espnOdds({ home: ['+120', '-250'], away: ['+230', '+700'], draw: ['+240', '+330'], total: [2.5, 2.5], spread: -0.5, live: true }) }),
+        espnEvent({ id: 9002, mins: 60, state: 'pre', statusName: 'STATUS_SCHEDULED', home: 'Liverpool', away: 'Everton', league: EPL,
+          odds: espnOdds({ home: ['-200', '-200'], away: ['+500', '+500'], draw: ['+340', '+340'], total: [2.5, 2.5], spread: -1.5 }) }),
+        espnEvent({ id: 9003, mins: 90, state: 'pre', statusName: 'STATUS_SCHEDULED', home: 'Village FC', away: 'Town FC', league: { id: 9, note: 'Club Friendly' } }),
+      ],
+    };
+  }
+  if (path === 'basketball/nba') {
+    return {
+      leagues: [{ logos: [{ href: null }] }],
+      events: [
+        espnEvent({ id: 9101, mins: -60, state: 'in', period: 3, clock: 300, statusName: 'STATUS_IN_PROGRESS', home: 'Boston Celtics', away: 'Miami Heat', score: [70, 64],
+          odds: espnOdds({ home: ['-180', '-300'], away: ['+150', '+240'], total: [224.5, 221.5], spread: -4.5, live: true }) }),
+        espnEvent({ id: 9102, mins: 120, state: 'pre', statusName: 'STATUS_SCHEDULED', home: 'Denver Nuggets', away: 'Utah Jazz',
+          odds: espnOdds({ home: ['-400', '-400'], away: ['+310', '+310'], total: [230.5, 230.5], spread: -9.5 }) }),
+      ],
+    };
+  }
+  if (path === 'hockey/nhl') {
+    return {
+      leagues: [{ logos: [{ href: null }] }],
+      events: [
+        espnEvent({ id: 9201, mins: -50, state: 'in', period: 2, clock: 600, statusName: 'STATUS_IN_PROGRESS', home: 'Boston Bruins', away: 'Toronto Maple Leafs', score: [2, 1],
+          odds: espnOdds({ home: ['-140', '-210'], away: ['+120', '+175'], total: [6.5, 6.5], spread: -1.5, live: true }) }),
+        espnEvent({ id: 9202, mins: 150, state: 'pre', statusName: 'STATUS_SCHEDULED', home: 'New York Rangers', away: 'Buffalo Sabres',
+          odds: espnOdds({ home: ['-160', '-160'], away: ['+135', '+135'], total: [6.5, 6.5], spread: -1.5 }) }),
+      ],
+    };
+  }
+  return { events: [] };
+}
 
 console.log('[mock] upstream fetch patched (api-sports + gemini)');

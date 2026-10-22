@@ -16,12 +16,12 @@ const strList = (v, max = 4) =>
  * list and a narrative. Falls back to a pure model verdict if Gemini is down,
  * so a missing/exhausted key never breaks a prediction.
  */
-export async function analyse({ game, model, market, picks, risk, h2h, recent }) {
+export async function analyse({ game, model, market, marketKind = 'prematch', picks, risk, h2h, recent }) {
   if (!geminiKeys.size) {
     return { ai: null, picks, degraded: 'no-gemini-key' };
   }
 
-  const prompt = buildPrompt({ game, model, market, candidates: picks, risk, h2h, recent });
+  const prompt = buildPrompt({ game, model, market, marketKind, candidates: picks, risk, h2h, recent });
 
   let result;
   try {

@@ -26,12 +26,12 @@ function GameRow({ game, selected, onSelect }) {
 
       <div className="game-teams">
         <div className={`team-row ${homeWinning ? 'winning' : awayWinning ? 'losing' : ''}`}>
-          {game.teams.home.logo ? <img src={game.teams.home.logo} alt="" loading="lazy" /> : null}
+          {game.teams.home.logo ? <img src={game.teams.home.logo} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} /> : null}
           <span className="name">{game.teams.home.name}</span>
           {hasScore ? <span className="score">{home}</span> : null}
         </div>
         <div className={`team-row ${awayWinning ? 'winning' : homeWinning ? 'losing' : ''}`}>
-          {game.teams.away.logo ? <img src={game.teams.away.logo} alt="" loading="lazy" /> : null}
+          {game.teams.away.logo ? <img src={game.teams.away.logo} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} /> : null}
           <span className="name">{game.teams.away.name}</span>
           {hasScore ? <span className="score">{away}</span> : null}
         </div>
@@ -47,6 +47,11 @@ function GameRow({ game, selected, onSelect }) {
             {countdown(game.startsInMinutes)}
           </span>
         )}
+        {game.hasOdds === false && !finished ? (
+          <span className="no-odds" title="No bookmaker prices this fixture, so its prediction is only a league average">
+            no odds
+          </span>
+        ) : null}
       </div>
     </button>
   );
@@ -76,7 +81,11 @@ export function GameList({ games, selectedKey, onSelect, groupByLeague = true })
   return groups.map((grp) => (
     <div className="league-group" key={grp.key}>
       <div className="league-head">
-        {grp.league.logo ? <img src={grp.league.logo} alt="" loading="lazy" /> : <span>{icon[grp.sport]}</span>}
+        {grp.league.logo ? (
+          <img src={grp.league.logo} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        ) : (
+          <span>{icon[grp.sport]}</span>
+        )}
         <span>{grp.league.name}</span>
         {grp.league.country ? <span style={{ color: 'var(--text-faint)', fontWeight: 500 }}>· {grp.league.country}</span> : null}
         {grp.league.tier <= 1 ? <span className="tier-badge">TOP</span> : null}

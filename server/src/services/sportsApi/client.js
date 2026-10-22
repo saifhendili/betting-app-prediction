@@ -24,6 +24,70 @@ const RAPID_HOSTS = {
   hockey: 'api-hockey.p.rapidapi.com',
 };
 
+/**
+ * Client-side throttle.
+ *
+ * API-SPORTS allows 10 requests/MINUTE per key on the free plan (header
+ * `x-ratelimit-limit`) on top of the 100/day cap. A burst — "best bets" running
+ * several predictions at once — blows straight through it. Rather than get
+ * refused and benched, requests wait for a slot. Each key has its own window,
+ * so adding keys multiplies throughput as well as daily quota.
+ */
+const RATE_WINDOW_MS = 60_000;
+const MAX_WAIT_MS = 30_000;
+
+const windowHits = (entry) => {
+  const cutoff = Date.now() - RATE_WINDOW_MS;
+  entry.hits = (entry.hits || []).filter((t) => t > cutoff);
+  return entry.hits;
+};
+
+const perMinuteLimit = (entry) => entry.rateLimitPerMin || env.sports.ratePerMinute;
+
+function hasCapacity(entry) {
+  return windowHits(entry).length < perMinuteLimit(entry);
+}
+
+function msUntilCapacity(entry) {
+  const hits = windowHits(entry);
+  const limit = perMinuteLimit(entry);
+  if (hits.length < limit) return 0;
+  const sorted = [...hits].sort((a, b) => a - b);
+  return Math.max(sorted[hits.length - limit] + RATE_WINDOW_MS - Date.now() + 100, 0);
+}
+
+const noteHit = (entry) => {
+  windowHits(entry).push(Date.now());
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Record what the upstream says is left, so the dashboard can show the truth. */
+function readQuotaHeaders(entry, res) {
+  // A MISSING header must not read as zero. Number(null) === 0, so converting
+  // blindly would treat any response without these headers as "no quota left"
+  // and bench a perfectly healthy key.
+  const header = (name) => {
+    const raw = res.headers.get(name);
+    if (raw === null || raw === '') return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const perMin = header('x-ratelimit-limit');
+  const dayLeft = header('x-ratelimit-requests-remaining');
+  const dayLimit = header('x-ratelimit-requests-limit');
+
+  if (perMin !== null && perMin > 0) entry.rateLimitPerMin = perMin;
+  if (dayLeft !== null) entry.dayRemaining = dayLeft;
+  if (dayLimit !== null) entry.dayLimit = dayLimit;
+
+  // Nothing left today: stop trying until the upstream resets.
+  if (dayLeft !== null && dayLeft <= 0) {
+    sportsKeys.bench(entry, 'daily quota exhausted (0 requests remaining)', msUntilDailyReset());
+  }
+}
+
 /** Per-sport daily call counter, for the dashboard (free tier = 100/day/sport). */
 const usage = { day: null, football: 0, basketball: 0, hockey: 0 };
 function countCall(sport) {
@@ -40,8 +104,33 @@ function headersFor(sport, key) {
   return { 'x-apisports-key': key };
 }
 
-class QuotaError extends Error {}
+class QuotaError extends Error {
+  constructor(message, retryAfterMs) {
+    super(message);
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/** Seconds until the next UTC midnight, when API-SPORTS resets daily counters. */
+function msUntilDailyReset() {
+  const now = new Date();
+  const reset = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 1, 0);
+  return Math.min(Math.max(reset - now.getTime(), 60_000), 12 * 3600 * 1000);
+}
 export class SportsApiError extends Error {}
+
+/**
+ * Every configured key is benched, missing or dead. Distinct from a normal API
+ * error because it is the one failure another data source can fix — the
+ * adapter registry catches it and falls back to ESPN.
+ */
+export class NoUsableKeyError extends SportsApiError {}
+
+function describeUnusableKeys() {
+  if (!sportsKeys.size) return 'No API-SPORTS key configured.';
+  const reasons = [...new Set(sportsKeys.keys.map((k) => k.lastError).filter(Boolean))];
+  return `No usable API-SPORTS key${reasons.length ? `: ${reasons.join('; ')}` : ' (all rate-limited)'}.`;
+}
 
 /**
  * The request will never succeed with this key because of the account's plan
@@ -117,15 +206,25 @@ function classifyErrors(errs) {
   const fields = entries.map(([k]) => k.toLowerCase());
   const body = entries.map(([, v]) => v).join(' ').toLowerCase();
 
-  // dead or missing key
+  // dead, missing or SUSPENDED key. Previously a suspended account fell through
+  // to "request error", so the key was never benched and every call kept
+  // hitting it.
+  if (fields.includes('access') || /suspend|banned|blocked|deactivat|disabled/.test(body)) {
+    return { kind: 'auth', text: 'API-SPORTS account suspended — see dashboard.api-football.com' };
+  }
   if (fields.includes('token') || /missing application key|invalid api key|not subscribed/.test(body)) {
     return { kind: 'auth', text };
   }
-  // genuine quota / rate limiting
+  // A per-MINUTE rate limit is not exhaustion — the key works again in seconds.
+  // Benching it for half an hour (as a daily limit deserves) is what previously
+  // made a burst of predictions report "all keys rate-limited".
+  if (fields.includes('ratelimit') || /per minute|rate limit|too many requests/.test(body)) {
+    return { kind: 'rate', text };
+  }
+  // Daily quota genuinely gone until the upstream reset.
   if (
     fields.includes('requests') ||
-    fields.includes('ratelimit') ||
-    /reached the request limit|request limit for the day|too many requests|exceeded.*(requests|quota)|rate limit/.test(body)
+    /reached the request limit|request limit for the day|daily|exceeded.*(requests|quota)/.test(body)
   ) {
     return { kind: 'quota', text };
   }
@@ -153,25 +252,34 @@ async function rawGet(sport, pathname, params) {
   });
 
   const candidates = sportsKeys.orderedCandidates();
-  if (!candidates.length) {
-    throw new SportsApiError(
-      sportsKeys.size
-        ? 'All sports API keys are rate-limited right now. Add more keys in SPORTS_API_KEYS or wait for the quota to reset.'
-        : 'No sports API key configured. Set SPORTS_API_KEYS in server/.env (free at dashboard.api-football.com/register).'
-    );
-  }
+  if (!candidates.length) throw new NoUsableKeyError(describeUnusableKeys());
 
   let lastError;
   for (const entry of candidates) {
+    // Prefer a key with a free slot; otherwise wait for the soonest one.
+    if (!hasCapacity(entry)) {
+      const alternative = candidates.find((c) => c !== entry && hasCapacity(c));
+      if (alternative) continue; // another key can serve this now
+      const wait = Math.min(msUntilCapacity(entry), MAX_WAIT_MS);
+      if (wait > 0) {
+        log.info(`throttling ${entry.label} for ${Math.ceil(wait / 1000)}s (${perMinuteLimit(entry)}/min cap)`);
+        await sleep(wait);
+      }
+    }
+
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 15000);
     try {
       sportsKeys.markUsed(entry);
+      noteHit(entry);
       const res = await fetch(url, { headers: headersFor(sport, entry.key), signal: ac.signal });
       countCall(sport);
+      readQuotaHeaders(entry, res);
 
-      if (res.status === 429) throw new QuotaError('HTTP 429 rate limit');
-      if (res.status === 401 || res.status === 403) throw new QuotaError(`HTTP ${res.status} key rejected`);
+      if (res.status === 429) throw new QuotaError('HTTP 429 rate limit', 65_000);
+      if (res.status === 401 || res.status === 403) {
+        throw new QuotaError(`HTTP ${res.status} key rejected`, 6 * 3600 * 1000);
+      }
       if (!res.ok) throw new SportsApiError(`${sport}${pathname} → HTTP ${res.status}`);
 
       const body = await res.json();
@@ -180,8 +288,9 @@ async function rawGet(sport, pathname, params) {
       // failure has to be classified rather than pattern-matched loosely.
       const problem = classifyErrors(body?.errors);
       if (problem) {
-        if (problem.kind === 'quota') throw new QuotaError(problem.text);
-        if (problem.kind === 'auth') throw new QuotaError(problem.text);
+        if (problem.kind === 'rate') throw new QuotaError(problem.text, 65_000);
+        if (problem.kind === 'quota') throw new QuotaError(problem.text, msUntilDailyReset());
+        if (problem.kind === 'auth') throw new QuotaError(problem.text, 6 * 3600 * 1000);
         if (problem.kind === 'plan') {
           // Remember it and move on — the key itself is fine.
           markUnavailable(capability, problem.text);
@@ -194,7 +303,7 @@ async function rawGet(sport, pathname, params) {
       lastError = err;
       if (err instanceof PlanRestrictionError) throw err; // another key won't help
       if (err instanceof QuotaError) {
-        sportsKeys.bench(entry, err.message);
+        sportsKeys.bench(entry, err.message, err.retryAfterMs);
         continue; // try the next key
       }
       if (err.name === 'AbortError') {
@@ -207,6 +316,8 @@ async function rawGet(sport, pathname, params) {
       clearTimeout(timer);
     }
   }
+  // Every key we tried was benched on the way through.
+  if (lastError instanceof QuotaError) throw new NoUsableKeyError(describeUnusableKeys());
   throw lastError instanceof Error ? lastError : new SportsApiError(String(lastError));
 }
 

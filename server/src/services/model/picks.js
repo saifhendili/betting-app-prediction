@@ -358,9 +358,16 @@ export function buildCandidates({ model, market, weight = 0.55, teams, staleMark
     );
   });
 
+  // A stale market is a pre-match price on a game already under way: it no
+  // longer exists, so it must not be shown as bettable nor feed value scoring
+  // (0.73 × a dead 1.91 looks like +40% EV). Keep it for reference only.
+  const priced = staleMarket
+    ? out.map((c) => ({ ...c, staleOdds: c.marketOdds, marketOdds: null, ev: null, evModel: null }))
+    : out;
+
   // Drop anything already decided — in a live game "Over 0.5" at 1-0 is settled,
   // and a 99% selection is not a bet anyone can place at a meaningful price.
-  return out.filter((c) => Number.isFinite(c.probability) && c.probability > 0.015 && c.probability < 0.985);
+  return priced.filter((c) => Number.isFinite(c.probability) && c.probability > 0.015 && c.probability < 0.985);
 }
 
 // ── Risk profiles ───────────────────────────────────────────────────────────
@@ -441,7 +448,10 @@ export function confidenceFor(candidateItem, { model, market }) {
   const quality = model?.dataQuality?.level;
   conf += quality === 'high' ? 14 : quality === 'medium' ? 7 : quality === 'low' ? -4 : quality === 'partial' ? -12 : -18;
 
-  if (Number.isFinite(candidateItem.marketProbability)) {
+  // Only a COMPARABLE market earns the agreement bonus: a stale pre-match price
+  // on a live game has a probability but no edge, and agreeing with a price
+  // that no longer exists is not evidence of anything.
+  if (Number.isFinite(candidateItem.marketProbability) && Number.isFinite(candidateItem.edge)) {
     const agree = 1 - Math.min(Math.abs(candidateItem.edge), 0.25) / 0.25;
     conf += 6 + agree * 10; // market coverage is itself a confidence boost
     if (market?.bookmakerCount >= 5) conf += 4;

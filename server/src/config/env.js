@@ -37,6 +37,16 @@ export const env = {
   sports: {
     keys: list(process.env.SPORTS_API_KEYS),
     provider: (process.env.SPORTS_API_PROVIDER || 'apisports').toLowerCase(),
+    // API-SPORTS free plan: 10 requests/minute per key. Overridden at runtime
+    // by the `x-ratelimit-limit` header once a response has been seen.
+    ratePerMinute: num(process.env.SPORTS_RATE_PER_MINUTE, 10),
+    // 'espn'      — ESPN's public scoreboard: no key, no quota, DraftKings odds
+    //               including in-play prices. The default.
+    // 'apisports' — API-SPORTS (key required). Falls back to ESPN automatically
+    //               when no key is usable (missing, exhausted or suspended).
+    dataSource: ['espn', 'apisports'].includes(String(process.env.DATA_SOURCE || '').toLowerCase())
+      ? String(process.env.DATA_SOURCE).toLowerCase()
+      : 'espn',
   },
 
   timezone: process.env.TIMEZONE || 'Europe/Paris',

@@ -30,6 +30,31 @@ predictionsRouter.get('/profiles', (_req, res) => {
  * Best bets across a whole slate. Each game costs upstream API calls plus one
  * Gemini call, so the count is capped hard — this is the expensive endpoint.
  */
+/** Run `fn` over `items` with at most `limit` in flight, preserving order. */
+async function mapPool(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) {
+      const idx = next++;
+      out[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+const byTierThenKickoff = (a, b) =>
+  (a.league.tier ?? 9) - (b.league.tier ?? 9) || new Date(a.kickoff || 0) - new Date(b.kickoff || 0);
+
+/**
+ * Suggested bets across the slate — upcoming AND live games.
+ *
+ * Live games are guaranteed up to half the slots when any are on, so in-play
+ * suggestions never get crowded out by a busy upcoming schedule. Fixtures no
+ * bookmaker prices are skipped: without odds (and no team stats) the model can
+ * only produce a league-average guess, which is not a suggestion worth making.
+ */
 predictionsRouter.get('/top', async (req, res, next) => {
   try {
     const sport = String(req.query.sport || 'football').toLowerCase();
@@ -39,27 +64,58 @@ predictionsRouter.get('/top', async (req, res, next) => {
       throw err;
     }
     const risk = normRisk(req.query.risk);
-    const count = Math.min(Math.max(Number(req.query.count) || 5, 1), 10);
+    const count = Math.min(Math.max(Number(req.query.count) || 10, 1), 25);
     const windowKey = String(req.query.window || '12h').toLowerCase();
+    const lean = String(req.query.lean ?? 'true') !== 'false';
+    const includeLive = String(req.query.live ?? 'true') !== 'false';
 
-    const slate = await listGames({ sport, window: windowKey, limit: 60 });
-    // prioritise the biggest competitions, and never predict a finished game
-    const shortlist = slate.games
-      .filter((g) => g.state !== 'finished')
-      .sort((a, b) => (a.league.tier ?? 9) - (b.league.tier ?? 9))
-      .slice(0, count);
+    const slate = await listGames({ sport, window: windowKey, limit: 300 });
+    let pool = slate.games;
+    if (includeLive && windowKey !== 'live') {
+      // hour windows list upcoming games only — add whatever is on right now
+      const live = await listGames({ sport, window: 'live', limit: 300 }).catch(() => null);
+      if (live) pool = [...live.games, ...pool];
+    }
 
-    const settled = await Promise.allSettled(
-      shortlist.map((g) => predict({ sport: g.sport, gameId: g.id, risk }))
-    );
+    const seen = new Set();
+    pool = pool.filter((g) => {
+      if (seen.has(g.gameKey)) return false;
+      seen.add(g.gameKey);
+      return g.state !== 'finished';
+    });
+    const unpriced = pool.filter((g) => g.hasOdds === false).length;
+    pool = pool.filter((g) => g.hasOdds !== false);
+
+    const liveGames = pool.filter((g) => g.state === 'live').sort(byTierThenKickoff);
+    const upcomingGames = pool.filter((g) => g.state === 'upcoming').sort(byTierThenKickoff);
+
+    const liveSlots = includeLive ? Math.min(liveGames.length, windowKey === 'live' ? count : Math.ceil(count / 2)) : 0;
+    const shortlist = [...liveGames.slice(0, liveSlots), ...upcomingGames.slice(0, count - liveSlots)];
+    // top up from whichever group still has games if the other ran short
+    for (const g of [...liveGames.slice(liveSlots), ...upcomingGames.slice(count - liveSlots)]) {
+      if (shortlist.length >= count) break;
+      if (!shortlist.includes(g)) shortlist.push(g);
+    }
+
+    // ESPN has no request quota, so ESPN games run a few at a time (bounded by
+    // Gemini's own rate limits). API-SPORTS games stay strictly sequential:
+    // its 10 requests/minute cap is what used to bench the key.
+    const allEspn = shortlist.every((g) => g.source === 'espn');
+    const settled = await mapPool(shortlist, allEspn ? 3 : 1, async (g) => {
+      try {
+        return { ok: true, value: await predict({ sport: g.sport, gameId: g.id, risk, preloadedGame: g, lean }) };
+      } catch (err) {
+        return { ok: false, err };
+      }
+    });
 
     const predictions = [];
     const failures = [];
-    settled.forEach((s, i) => {
-      if (s.status === 'fulfilled') predictions.push(s.value);
+    settled.forEach((r, i) => {
+      if (r.ok) predictions.push(r.value);
       else {
-        failures.push({ game: shortlist[i]?.gameKey, message: s.reason?.message || String(s.reason) });
-        log.warn(`top-picks: ${shortlist[i]?.gameKey} failed — ${s.reason?.message}`);
+        failures.push({ game: shortlist[i]?.gameKey, message: r.err?.message || String(r.err) });
+        log.warn(`suggestions: ${shortlist[i]?.gameKey} failed — ${r.err?.message}`);
       }
     });
 
@@ -71,6 +127,9 @@ predictionsRouter.get('/top', async (req, res, next) => {
       window: slate.window,
       requested: shortlist.length,
       slateSize: slate.counts.total,
+      liveCount: predictions.filter((p) => p.game.state === 'live').length,
+      skippedUnpriced: unpriced,
+      lean,
       failures,
       predictions,
     });
