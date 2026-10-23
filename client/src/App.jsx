@@ -66,6 +66,9 @@ export default function App() {
     const saved = uiPrefs.get('suggestScope', 'mix');
     return SUGGEST_SCOPES.some((s) => s.key === saved) ? saved : 'mix';
   });
+  // 'auto' = only games with bookmaker odds; 'all' = fill up to the count with
+  // every game in the window, priced ones first
+  const [suggestGames, setSuggestGames] = useState(() => (uiPrefs.get('suggestGames', 'auto') === 'all' ? 'all' : 'auto'));
   const [topOpen, setTopOpen] = useState(
     () => Boolean(savedStore.load().runs[0]) && uiPrefs.get('suggestionsOpen', true)
   );
@@ -79,7 +82,8 @@ export default function App() {
   useEffect(() => {
     uiPrefs.set('suggestScope', suggestScope);
     uiPrefs.set('suggestCount', topCount);
-  }, [suggestScope, topCount]);
+    uiPrefs.set('suggestGames', suggestGames);
+  }, [suggestScope, topCount, suggestGames]);
 
   const slateAbort = useRef(null);
   const predAbort = useRef(null);
@@ -159,8 +163,8 @@ export default function App() {
   }, [risk]);
 
   // ── suggested bets ───────────────────────────────────────────────────────
-  // Live games are always included (the server reserves them up to half the
-  // slots); on the Live tab the suggestions are live-only.
+  // The "bet on" scope decides which games are eligible (live, next N hours…);
+  // the "games" choice decides whether games without odds may fill the slots.
   const loadTopPicks = useCallback(async () => {
     setTopOpen(true);
     setTopLoading(true);
@@ -168,11 +172,19 @@ export default function App() {
     setTopSavedAt(null);
     try {
       const scope = SUGGEST_SCOPES.find((s) => s.key === suggestScope) || SUGGEST_SCOPES[1];
-      const data = await api.topPicks({ sport, window: scope.window, live: scope.live, risk, count: topCount });
+      const data = await api.topPicks({
+        sport,
+        window: scope.window,
+        live: scope.live,
+        unpriced: suggestGames === 'all',
+        risk,
+        count: topCount,
+      });
       data.scope = scope.key;
+      data.gamesMode = suggestGames;
       // every run is kept in this browser automatically
       if (data?.predictions?.length) {
-        const run = savedStore.addRun({ sport, window: scope.key, risk, data });
+        const run = savedStore.addRun({ sport, window: scope.key, risk, gamesMode: suggestGames, data });
         setTopSavedAt(run.savedAt);
         setTopData({ ...data, runId: run.id });
       } else {
@@ -183,7 +195,7 @@ export default function App() {
     } finally {
       setTopLoading(false);
     }
-  }, [sport, suggestScope, risk, topCount]);
+  }, [sport, suggestScope, suggestGames, risk, topCount]);
 
   /** ☆ / ★ on any pick: save it, or remove it if it is already saved. */
   const toggleSavePick = useCallback((prediction, pick) => {
@@ -302,6 +314,17 @@ export default function App() {
               {SUGGEST_SCOPES.map((s) => (
                 <option key={s.key} value={s.key}>{s.label}</option>
               ))}
+            </select>
+            <select
+              id="suggest-games"
+              className="mini-select"
+              value={suggestGames}
+              onChange={(e) => setSuggestGames(e.target.value)}
+              title="Auto: only games a bookmaker prices. All games: fill up to the number you chose with every game, priced ones first."
+              aria-label="Which games to include"
+            >
+              <option value="auto">Auto — games with odds</option>
+              <option value="all">All games</option>
             </select>
             <select
               id="top-count"

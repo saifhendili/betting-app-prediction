@@ -47,13 +47,21 @@ async function mapPool(items, limit, fn) {
 const byTierThenKickoff = (a, b) =>
   (a.league.tier ?? 9) - (b.league.tier ?? 9) || new Date(a.kickoff || 0) - new Date(b.kickoff || 0);
 
+// Games with odds get real predictions, so they always take the slots first;
+// un-priced games only fill whatever is left.
+const pricedFirst = (a, b) => (a.hasOdds === false) - (b.hasOdds === false) || byTierThenKickoff(a, b);
+
 /**
  * Suggested bets across the slate — upcoming AND live games.
  *
  * Live games are guaranteed up to half the slots when any are on, so in-play
- * suggestions never get crowded out by a busy upcoming schedule. Fixtures no
- * bookmaker prices are skipped: without odds (and no team stats) the model can
- * only produce a league-average guess, which is not a suggestion worth making.
+ * suggestions never get crowded out by a busy upcoming schedule.
+ *
+ * By default (`unpriced=false`, "Auto") fixtures no bookmaker prices are
+ * skipped: without odds (and no team stats) the model can only produce a
+ * league-average guess. With `unpriced=true` ("All games") they are kept and
+ * fill the remaining slots after every priced game — clearly labelled, and
+ * still analysed, but at the low confidence they deserve.
  */
 predictionsRouter.get('/top', async (req, res, next) => {
   try {
@@ -68,6 +76,7 @@ predictionsRouter.get('/top', async (req, res, next) => {
     const windowKey = String(req.query.window || '12h').toLowerCase();
     const lean = String(req.query.lean ?? 'true') !== 'false';
     const includeLive = String(req.query.live ?? 'true') !== 'false';
+    const includeUnpriced = String(req.query.unpriced ?? 'false') === 'true';
 
     const slate = await listGames({ sport, window: windowKey, limit: 300 });
     let pool = slate.games;
@@ -84,13 +93,13 @@ predictionsRouter.get('/top', async (req, res, next) => {
       return g.state !== 'finished';
     });
     const unpriced = pool.filter((g) => g.hasOdds === false).length;
-    pool = pool.filter((g) => g.hasOdds !== false);
+    if (!includeUnpriced) pool = pool.filter((g) => g.hasOdds !== false);
 
     // `live=false` means upcoming ONLY: day windows list games in progress too,
     // so they must be dropped here, not just given zero reserved slots (the
     // top-up below would otherwise pull them straight back in).
-    const liveGames = includeLive ? pool.filter((g) => g.state === 'live').sort(byTierThenKickoff) : [];
-    const upcomingGames = pool.filter((g) => g.state === 'upcoming').sort(byTierThenKickoff);
+    const liveGames = includeLive ? pool.filter((g) => g.state === 'live').sort(pricedFirst) : [];
+    const upcomingGames = pool.filter((g) => g.state === 'upcoming').sort(pricedFirst);
 
     const liveSlots = includeLive ? Math.min(liveGames.length, windowKey === 'live' ? count : Math.ceil(count / 2)) : 0;
     const shortlist = [...liveGames.slice(0, liveSlots), ...upcomingGames.slice(0, count - liveSlots)];
@@ -100,11 +109,11 @@ predictionsRouter.get('/top', async (req, res, next) => {
       if (!shortlist.includes(g)) shortlist.push(g);
     }
 
-    // ESPN has no request quota, so ESPN games run a few at a time (bounded by
-    // Gemini's own rate limits). API-SPORTS games stay strictly sequential:
-    // its 10 requests/minute cap is what used to bench the key.
-    const allEspn = shortlist.every((g) => g.source === 'espn');
-    const settled = await mapPool(shortlist, allEspn ? 3 : 1, async (g) => {
+    // ESPN and TheSportsDB games cost no metered request, so they run a few at a
+    // time (bounded by Gemini's own rate limits). API-SPORTS games stay strictly
+    // sequential: its 10 requests/minute cap is what used to bench the key.
+    const metered = shortlist.some((g) => g.source === 'apisports');
+    const settled = await mapPool(shortlist, metered ? 1 : 3, async (g) => {
       try {
         return { ok: true, value: await predict({ sport: g.sport, gameId: g.id, risk, preloadedGame: g, lean }) };
       } catch (err) {
@@ -128,11 +137,12 @@ predictionsRouter.get('/top', async (req, res, next) => {
       sport,
       risk,
       window: slate.window,
-      scope: { window: windowKey, includeLive },
+      scope: { window: windowKey, includeLive, includeUnpriced },
       requested: shortlist.length,
       slateSize: slate.counts.total,
       liveCount: predictions.filter((p) => p.game.state === 'live').length,
-      skippedUnpriced: unpriced,
+      unpricedCount: predictions.filter((p) => p.game.hasOdds === false).length,
+      skippedUnpriced: includeUnpriced ? 0 : unpriced,
       lean,
       failures,
       predictions,

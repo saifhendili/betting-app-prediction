@@ -167,6 +167,10 @@ echk "scope 1h: upcoming within 60 min" "/api/predictions/top?sport=all&window=1
 echk "scope 3h: none live, all ≤180 min" "/api/predictions/top?sport=all&window=3h&live=false&count=6" "d['predictions'] and all(p['game']['state']=='upcoming' and p['game']['startsInMinutes']<=180 for p in d['predictions'])"
 echk "scope today, live=false: no live" "/api/predictions/top?sport=all&window=24h&live=false&count=6" "d['predictions'] and not any(p['game']['state']=='live' for p in d['predictions'])"
 echk "scope mix: live + upcoming"       "/api/predictions/top?sport=all&window=12h&live=true&count=6" "{p['game']['state'] for p in d['predictions']}=={'live','upcoming'}"
+echk "auto: live skips the no-odds game" "/api/predictions/top?sport=football&window=live&count=10" "[p['gameId'] for p in d['predictions']]==['soccer.9001'] and d['skippedUnpriced']==1"
+echk "all games: no-odds game included" "/api/predictions/top?sport=football&window=live&count=10&unpriced=true" "sorted(p['gameId'] for p in d['predictions'])==['soccer.9001','tsdb.700001'] and d['unpricedCount']==1 and d['skippedUnpriced']==0"
+echk "all games: priced fill slots first" "/api/predictions/top?sport=football&window=live&count=1&unpriced=true" "[p['gameId'] for p in d['predictions']]==['soccer.9001']"
+echk "all games: fewer than asked is ok" "/api/predictions/top?sport=football&window=live&count=25&unpriced=true" "d['requested']==2 and len(d['predictions'])==2"
 kill "$ESPN_SRV" 2>/dev/null
 
 echo "── fallback: API-SPORTS key suspended → ESPN"

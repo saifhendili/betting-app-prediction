@@ -445,3 +445,8 @@ table.h2h tr:last-child td { border-bottom: 0; }
 .restored-note strong { color: var(--text); }
 .panel-head .mini-select { max-width: 340px; }
 @media (max-width: 720px) { .panel-head .mini-select { max-width: 100%; } }
+
+/* suggestion card for a game no bookmaker prices ("All games" mode) */
+.sg-card.no-odds-card { border-style: dashed; }
+.sg-card.no-odds-card .sg-pick.best { background: rgba(255, 255, 255, 0.03); border-color: var(--line); }
+.sg-foot.muted-foot { color: var(--text-faint); opacity: 1; line-height: 1.45; }

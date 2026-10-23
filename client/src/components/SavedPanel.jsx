@@ -69,6 +69,7 @@ function SavedRun({ run, onOpen, onShow }) {
         <strong>{when(run.savedAt)}</strong>
         <span className="chip">{run.sport}</span>
         {run.window ? <span className="chip">{scopeLabel(run.window)}</span> : null}
+        {run.gamesMode === 'all' ? <span className="chip">all games</span> : null}
         <span className="chip">{run.risk}</span>
         <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>
           {run.items.length} games{run.liveCount ? ` · ${run.liveCount} live` : ''}

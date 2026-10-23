@@ -108,8 +108,8 @@ games, 1 → 53 basketball and 0 → 83 hockey games for the day.** Set `ENABLE_
 off.
 
 TheSportsDB games show live scores and get an in-play prediction, but with no odds and no team
-statistics it is a league-average one, clearly labelled, and Suggested bets skips them. Within a
-competition tier, priced games sort first.
+statistics it is a league-average one, clearly labelled, and Suggested bets skips them unless you
+choose *All games*. Within a competition tier, priced games sort first.
 
 Even merged, this is not every match on earth: sites like Flashscore track well over a thousand
 competitions. A paid API-SPORTS plan (~1,100 leagues, with odds) is the step up if you need that —
@@ -122,8 +122,8 @@ If API-SPORTS is selected and its key turns out missing, exhausted or **suspende
 to ESPN by itself and says so in `/api/health` and the Settings panel, rather than showing no games.
 
 Fixtures no bookmaker prices — friendlies, youth and minor leagues — are still listed (marked
-*no odds*), but they are skipped by Suggested bets: with no prices and no team statistics the model
-can only produce a league-average guess.
+*no odds*). Suggested bets skips them by default (*Auto*), because with no prices and no team
+statistics the model can only produce a league-average guess; choose *All games* to include them.
 
 ### Live betting
 
@@ -140,10 +140,17 @@ game. With the timing model the average gap is ~1pp, with disagreements on both 
 
 ## Suggested bets & saved results
 
-**💡 Suggested bets** picks the strongest priced games in the current window and returns, for each, a
-best bet for your risk level plus the other options (tap *+N more bet options*). Live games are
-always included — up to half the slots when any are on — and on the *Live* tab the list is live-only.
-Choose how many games (5–25) next to the button.
+**💡 Suggested bets** returns, for each game, a best bet for your risk level plus the other options
+(tap *+N more bet options*). Three choices sit next to the button, all remembered between visits:
+
+- **bet on** — *Live now*, *Live + next 12h* (live games get up to half the slots), *Next 1 / 3 / 6 /
+  12 / 24 hours*, *Rest of today* or *Tomorrow*. The upcoming windows are exclusive: *Next 1 hour*
+  means games kicking off within the hour, not games already on.
+- **games** — *Auto* uses only games a bookmaker prices. *All games* fills up to your number with
+  every game in the window: priced games take the slots first, then games without odds, which are
+  marked on their card (dashed border, "no odds") and come with fair odds from league averages and
+  low confidence. Asking for 10 when only 6 exist simply returns 6.
+- **how many** — 5 to 25 games.
 
 **Saving** happens in your browser (localStorage), nothing on the server:
 

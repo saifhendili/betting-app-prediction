@@ -45,9 +45,10 @@ function SuggestionCard({ prediction, savedKeys, onToggleSave, onOpen }) {
   const { game, topPick, picks } = prediction;
   const live = game.state === 'live';
   const others = (picks || []).filter((p) => p.id !== topPick?.id);
+  const noOdds = game.hasOdds === false;
 
   return (
-    <div className={`sg-card ${live ? 'live' : ''}`}>
+    <div className={`sg-card ${live ? 'live' : ''} ${noOdds ? 'no-odds-card' : ''}`}>
       <div className="sg-head">
         <div className="sg-meta">
           {live ? (
@@ -96,7 +97,12 @@ function SuggestionCard({ prediction, savedKeys, onToggleSave, onOpen }) {
         </button>
       </div>
 
-      {live && prediction.dataSource?.liveOdds ? (
+      {noOdds ? (
+        <div className="sg-foot muted-foot">
+          No odds for this game — the prices shown are the model&apos;s fair odds from league averages, so treat
+          this as a rough estimate.
+        </div>
+      ) : live && prediction.dataSource?.liveOdds ? (
         <div className="sg-foot">Priced against {prediction.dataSource.provider || 'the bookmaker'}&apos;s live in-play odds</div>
       ) : null}
     </div>
@@ -105,7 +111,8 @@ function SuggestionCard({ prediction, savedKeys, onToggleSave, onOpen }) {
 
 const runLabel = (r) =>
   `${new Date(r.savedAt).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` +
-  ` · ${r.sport} · ${scopeLabel(r.window)} · ${r.risk} · ${r.items.length} games${r.liveCount ? ` (${r.liveCount} live)` : ''}`;
+  ` · ${r.sport} · ${scopeLabel(r.window)}${r.gamesMode === 'all' ? ' · all games' : ''} · ${r.risk}` +
+  ` · ${r.items.length} games${r.liveCount ? ` (${r.liveCount} live)` : ''}`;
 
 export function SuggestedBets({
   data,
@@ -132,7 +139,9 @@ export function SuggestedBets({
         {data && !loading ? (
           <span className="muted" style={{ marginLeft: 8 }}>
             {scope ? `${scope} · ` : ''}
+            {data.gamesMode === 'all' ? 'all games · ' : ''}
             {data.predictions.length} games · {live.length} live
+            {data.unpricedCount ? ` · ${data.unpricedCount} without odds` : ''}
             {at ? ` · ${data.restored ? 'from' : 'saved'} ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
           </span>
         ) : null}
@@ -193,10 +202,14 @@ export function SuggestedBets({
           <div className="empty">
             <h3>Nothing to suggest{scope ? ` for “${scope}”` : ''}</h3>
             <p>
-              {data?.scope === 'live'
-                ? 'No game with bookmaker prices is being played right now. Try “Live + next 12h” or an upcoming window.'
-                : 'No game with bookmaker prices in this window. Try a wider window, “Live now”, or another sport.'}
-              {data?.skippedUnpriced ? ` (${data.skippedUnpriced} game${data.skippedUnpriced === 1 ? '' : 's'} had no odds.)` : ''}
+              {data?.gamesMode === 'all'
+                ? 'No games at all in this window. Try a wider window or another sport.'
+                : data?.scope === 'live'
+                  ? 'No game with bookmaker prices is being played right now. Try “Live + next 12h” or an upcoming window.'
+                  : 'No game with bookmaker prices in this window. Try a wider window, “Live now”, or another sport.'}
+              {data?.skippedUnpriced
+                ? ` ${data.skippedUnpriced} game${data.skippedUnpriced === 1 ? ' has' : 's have'} no odds — choose “All games” to include ${data.skippedUnpriced === 1 ? 'it' : 'them'}.`
+                : ''}
             </p>
           </div>
         ) : (
@@ -235,7 +248,9 @@ export function SuggestedBets({
             ) : null}
             {data.failures?.length || data.skippedUnpriced ? (
               <p className="field-note" style={{ marginTop: 12 }}>
-                {data.skippedUnpriced ? `${data.skippedUnpriced} games skipped because no bookmaker prices them. ` : ''}
+                {data.skippedUnpriced
+                  ? `${data.skippedUnpriced} game${data.skippedUnpriced === 1 ? '' : 's'} skipped because no bookmaker prices ${data.skippedUnpriced === 1 ? 'it' : 'them'} — choose “All games” to include ${data.skippedUnpriced === 1 ? 'it' : 'them'}. `
+                  : ''}
                 {data.failures?.length ? `${data.failures.length} game(s) could not be analysed.` : ''}
               </p>
             ) : null}

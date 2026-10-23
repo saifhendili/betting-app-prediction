@@ -83,6 +83,8 @@ function condenseGame(g) {
     score: g.score,
     minute: g.status?.elapsed ?? null,
     statusShort: g.status?.short ?? null,
+    // false = no bookmaker prices it; kept so a restored run still says so
+    hasOdds: g.hasOdds !== false,
   };
 }
 
@@ -107,7 +109,7 @@ export const savedStore = {
   load: read,
 
   /** Save a whole suggestions run. Returns the stored run. */
-  addRun({ sport, window, risk, data }) {
+  addRun({ sport, window, risk, gamesMode = 'auto', data }) {
     const d = read();
     const run = {
       id: uid(),
@@ -115,7 +117,9 @@ export const savedStore = {
       sport,
       window,
       risk,
+      gamesMode,
       liveCount: data.liveCount ?? 0,
+      unpricedCount: data.unpricedCount ?? 0,
       items: (data.predictions || []).map(condensePrediction),
     };
     d.runs = [run, ...d.runs].slice(0, MAX_RUNS);
@@ -208,7 +212,8 @@ function rehydrateItem(it) {
       status: { short: g.statusShort, elapsed: g.minute },
       league: { name: g.league },
       teams: { home: { name: g.home, logo: g.homeLogo }, away: { name: g.away, logo: g.awayLogo } },
-      hasOdds: true,
+      // runs saved before this flag existed only ever held priced games
+      hasOdds: g.hasOdds !== false,
     },
   };
 }
@@ -223,6 +228,8 @@ export function rehydrateRun(run) {
     window: run.window,
     risk: run.risk,
     liveCount: run.liveCount ?? 0,
+    unpricedCount: run.unpricedCount ?? 0,
+    gamesMode: run.gamesMode || 'auto',
     scope: run.window,
     requested: run.items.length,
     failures: [],
