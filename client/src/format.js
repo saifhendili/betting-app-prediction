@@ -32,3 +32,26 @@ export const confidenceBand = (c) =>
   c >= 72 ? 'high' : c >= 58 ? 'good' : c >= 45 ? 'fair' : 'low';
 
 export const verdictLabel = { strong: 'Strong', lean: 'Lean', pass: 'Pass' };
+
+/**
+ * What "💡 Suggested bets" analyses. Each upcoming window is exclusive —
+ * "Next 1 hour" means games kicking off within the hour, not games already on.
+ * `mix` keeps live games alongside the next 12 hours (up to half the slots).
+ */
+export const SUGGEST_SCOPES = [
+  { key: 'live', label: '🔴 Live now', window: 'live', live: true },
+  { key: 'mix', label: 'Live + next 12h', window: '12h', live: true },
+  { key: '1h', label: 'Next 1 hour', window: '1h', live: false },
+  { key: '3h', label: 'Next 3 hours', window: '3h', live: false },
+  { key: '6h', label: 'Next 6 hours', window: '6h', live: false },
+  { key: '12h', label: 'Next 12 hours', window: '12h', live: false },
+  { key: '24h', label: 'Next 24 hours', window: '24h', live: false },
+  { key: 'today', label: 'Rest of today', window: 'today', live: false },
+  { key: 'tomorrow', label: 'Tomorrow', window: 'tomorrow', live: false },
+];
+
+const LEGACY_WINDOW_LABELS = { all: 'Today + tomorrow', today: 'Today', '12h': 'Next 12h' };
+
+/** Label for a stored run's scope (older runs stored the page's window key). */
+export const scopeLabel = (key) =>
+  SUGGEST_SCOPES.find((s) => s.key === key)?.label.replace('🔴 ', '') || LEGACY_WINDOW_LABELS[key] || key || '';

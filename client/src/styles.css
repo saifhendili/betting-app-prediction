@@ -437,3 +437,11 @@ table.h2h tr:last-child td { border-bottom: 0; }
   .status-chips { width: 100%; }
   .saved-row { flex-wrap: wrap; }
 }
+
+.restored-note {
+  margin: 0 0 12px; padding: 9px 12px; border-radius: 8px; font-size: 12px; line-height: 1.5;
+  background: var(--purple-soft); border: 1px solid rgba(167, 123, 255, 0.3); color: var(--text-dim);
+}
+.restored-note strong { color: var(--text); }
+.panel-head .mini-select { max-width: 340px; }
+@media (max-width: 720px) { .panel-head .mini-select { max-width: 100%; } }

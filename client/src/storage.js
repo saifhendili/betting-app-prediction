@@ -174,3 +174,81 @@ export function useSaved() {
   }, []);
   return data;
 }
+
+/**
+ * Turn a saved run back into the shape the Suggested bets panel renders.
+ *
+ * It is a snapshot: scores, minutes and prices are as they were when the run
+ * was made, and there is no model/market detail — "Full analysis" therefore
+ * fetches a fresh prediction instead of reusing this object.
+ */
+function rehydrateItem(it) {
+  const g = it.game;
+  const best = it.best ? { ...it.best, isTopPick: true, rank: 1 } : null;
+  const options = (it.options || []).filter(Boolean).map((o, i) => ({ ...o, isTopPick: false, rank: i + 2 }));
+  return {
+    restored: true,
+    sport: g.sport,
+    gameId: g.id,
+    risk: it.risk,
+    confidence: it.confidence,
+    verdict: it.verdict,
+    headline: it.headline,
+    topPick: best,
+    picks: best ? [best, ...options] : options,
+    dataSource: { marketKind: it.marketKind, liveOdds: it.marketKind === 'inplay', provider: it.provider },
+    ai: it.reasoning?.length ? { reasoning: it.reasoning } : null,
+    game: {
+      sport: g.sport,
+      id: g.id,
+      gameKey: g.gameKey,
+      kickoff: g.kickoff,
+      state: g.state,
+      score: g.score || { home: null, away: null },
+      status: { short: g.statusShort, elapsed: g.minute },
+      league: { name: g.league },
+      teams: { home: { name: g.home, logo: g.homeLogo }, away: { name: g.away, logo: g.awayLogo } },
+      hasOdds: true,
+    },
+  };
+}
+
+export function rehydrateRun(run) {
+  if (!run) return null;
+  return {
+    restored: true,
+    runId: run.id,
+    savedAt: run.savedAt,
+    sport: run.sport,
+    window: run.window,
+    risk: run.risk,
+    liveCount: run.liveCount ?? 0,
+    scope: run.window,
+    requested: run.items.length,
+    failures: [],
+    skippedUnpriced: 0,
+    predictions: run.items.map(rehydrateItem),
+  };
+}
+
+/** Small per-browser UI preferences (which panels were open). */
+const PREFS = 'bettingOracle.ui.v1';
+export const uiPrefs = {
+  get(name, fallback) {
+    try {
+      const v = JSON.parse(localStorage.getItem(PREFS) || '{}')[name];
+      return v === undefined ? fallback : v;
+    } catch {
+      return fallback;
+    }
+  },
+  set(name, value) {
+    try {
+      const all = JSON.parse(localStorage.getItem(PREFS) || '{}');
+      all[name] = value;
+      localStorage.setItem(PREFS, JSON.stringify(all));
+    } catch {
+      /* private browsing: preferences just won't persist */
+    }
+  },
+};

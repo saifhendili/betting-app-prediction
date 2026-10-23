@@ -6,7 +6,8 @@ import { PredictionPanel } from './components/PredictionPanel.jsx';
 import { SuggestedBets } from './components/SuggestedBets.jsx';
 import { SettingsPanel } from './components/SettingsPanel.jsx';
 import { SavedPanel } from './components/SavedPanel.jsx';
-import { savedStore, useSaved, pickKey } from './storage.js';
+import { savedStore, useSaved, pickKey, rehydrateRun, uiPrefs } from './storage.js';
+import { SUGGEST_SCOPES } from './format.js';
 
 const SPORTS = [
   { key: 'football', label: 'Football', icon: '⚽' },
@@ -53,14 +54,32 @@ export default function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
-  const [topSavedAt, setTopSavedAt] = useState(null);
+  // The last suggestions run comes back after a refresh: it is restored from
+  // localStorage (a snapshot — the panel says so) rather than re-run, which
+  // would cost a Gemini call per game.
+  const [topSavedAt, setTopSavedAt] = useState(() => savedStore.load().runs[0]?.savedAt || null);
   const saved = useSaved();
   const savedKeys = useMemo(() => new Set(saved.picks.map((p) => p.key)), [saved.picks]);
-  const [topCount, setTopCount] = useState(10);
-  const [topOpen, setTopOpen] = useState(false);
-  const [topData, setTopData] = useState(null);
+  const [topCount, setTopCount] = useState(() => uiPrefs.get('suggestCount', 10));
+  // which games Suggested bets looks at — independent of the list's "When" tab
+  const [suggestScope, setSuggestScope] = useState(() => {
+    const saved = uiPrefs.get('suggestScope', 'mix');
+    return SUGGEST_SCOPES.some((s) => s.key === saved) ? saved : 'mix';
+  });
+  const [topOpen, setTopOpen] = useState(
+    () => Boolean(savedStore.load().runs[0]) && uiPrefs.get('suggestionsOpen', true)
+  );
+  const [topData, setTopData] = useState(() => rehydrateRun(savedStore.load().runs[0]));
   const [topLoading, setTopLoading] = useState(false);
   const [topError, setTopError] = useState(null);
+
+  useEffect(() => {
+    uiPrefs.set('suggestionsOpen', topOpen);
+  }, [topOpen]);
+  useEffect(() => {
+    uiPrefs.set('suggestScope', suggestScope);
+    uiPrefs.set('suggestCount', topCount);
+  }, [suggestScope, topCount]);
 
   const slateAbort = useRef(null);
   const predAbort = useRef(null);
@@ -148,19 +167,23 @@ export default function App() {
     setTopError(null);
     setTopSavedAt(null);
     try {
-      const data = await api.topPicks({ sport, window: window_, risk, count: topCount });
-      setTopData(data);
+      const scope = SUGGEST_SCOPES.find((s) => s.key === suggestScope) || SUGGEST_SCOPES[1];
+      const data = await api.topPicks({ sport, window: scope.window, live: scope.live, risk, count: topCount });
+      data.scope = scope.key;
       // every run is kept in this browser automatically
       if (data?.predictions?.length) {
-        const run = savedStore.addRun({ sport, window: window_, risk, data });
+        const run = savedStore.addRun({ sport, window: scope.key, risk, data });
         setTopSavedAt(run.savedAt);
+        setTopData({ ...data, runId: run.id });
+      } else {
+        setTopData(data);
       }
     } catch (err) {
       setTopError(err.message);
     } finally {
       setTopLoading(false);
     }
-  }, [sport, window_, risk, topCount]);
+  }, [sport, suggestScope, risk, topCount]);
 
   /** ☆ / ★ on any pick: save it, or remove it if it is already saved. */
   const toggleSavePick = useCallback((prediction, pick) => {
@@ -168,6 +191,17 @@ export default function App() {
     if (savedKeys.has(key)) savedStore.removePick(key);
     else savedStore.addPick({ prediction, pick });
   }, [savedKeys]);
+
+  /** Put a previous run back into the Suggested bets panel. */
+  const loadRun = useCallback((runId) => {
+    const run = savedStore.load().runs.find((r) => r.id === runId);
+    if (!run) return;
+    setTopData(rehydrateRun(run));
+    setTopSavedAt(run.savedAt);
+    setTopError(null);
+    setTopLoading(false);
+    setTopOpen(true);
+  }, []);
 
   /** Re-open a game from the saved list — fetches a fresh prediction for it. */
   const openSavedGame = useCallback((g) => {
@@ -255,9 +289,20 @@ export default function App() {
           <span className="control-label">Risk</span>
           <Segmented options={RISKS} value={risk} onChange={setRisk} prefix="risk-" />
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-            <label htmlFor="top-count" style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-              how many
+            <label htmlFor="suggest-scope" style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+              bet on
             </label>
+            <select
+              id="suggest-scope"
+              className="mini-select"
+              value={suggestScope}
+              onChange={(e) => setSuggestScope(e.target.value)}
+              title="Which games Suggested bets analyses"
+            >
+              {SUGGEST_SCOPES.map((s) => (
+                <option key={s.key} value={s.key}>{s.label}</option>
+              ))}
+            </select>
             <select
               id="top-count"
               className="mini-select"
@@ -305,7 +350,9 @@ export default function App() {
         <SettingsPanel onClose={() => setSettingsOpen(false)} onSaved={onSettingsSaved} />
       ) : null}
 
-      {savedOpen ? <SavedPanel onClose={() => setSavedOpen(false)} onOpenGame={openSavedGame} /> : null}
+      {savedOpen ? (
+        <SavedPanel onClose={() => setSavedOpen(false)} onOpenGame={openSavedGame} onShowRun={loadRun} />
+      ) : null}
 
       {topOpen ? (
         <SuggestedBets
@@ -313,11 +360,19 @@ export default function App() {
           loading={topLoading}
           error={topError}
           savedAt={topSavedAt}
+          runs={saved.runs}
+          onLoadRun={loadRun}
+          onRerun={loadTopPicks}
           savedKeys={savedKeys}
           onToggleSave={toggleSavePick}
           onClose={() => setTopOpen(false)}
           onSelectGame={(p) => {
             setSelected(p.game);
+            // a restored snapshot has no model detail — fetch a fresh analysis
+            if (p.restored) {
+              loadPrediction(p.game);
+              return;
+            }
             setPrediction(p);
             setPredError(null);
           }}

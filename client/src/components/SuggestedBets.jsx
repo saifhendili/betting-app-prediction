@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { pct, odds, clockTime, dayLabel, confidenceBand } from '../format.js';
+import { pct, odds, clockTime, dayLabel, confidenceBand, scopeLabel } from '../format.js';
 import { pickKey } from '../storage.js';
 
 function SaveButton({ saved, onClick }) {
@@ -103,25 +103,78 @@ function SuggestionCard({ prediction, savedKeys, onToggleSave, onOpen }) {
   );
 }
 
-export function SuggestedBets({ data, loading, error, savedAt, savedKeys, onToggleSave, onSelectGame, onClose }) {
+const runLabel = (r) =>
+  `${new Date(r.savedAt).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` +
+  ` · ${r.sport} · ${scopeLabel(r.window)} · ${r.risk} · ${r.items.length} games${r.liveCount ? ` (${r.liveCount} live)` : ''}`;
+
+export function SuggestedBets({
+  data,
+  loading,
+  error,
+  savedAt,
+  runs = [],
+  onLoadRun,
+  onRerun,
+  savedKeys,
+  onToggleSave,
+  onSelectGame,
+  onClose,
+}) {
   const live = (data?.predictions || []).filter((p) => p.game.state === 'live');
   const upcoming = (data?.predictions || []).filter((p) => p.game.state !== 'live');
+  const at = savedAt ? new Date(savedAt) : null;
+  const scope = scopeLabel(data?.scope || data?.window);
 
   return (
     <div className="panel" style={{ marginBottom: 18 }}>
-      <div className="panel-head">
+      <div className="panel-head" style={{ flexWrap: 'wrap', rowGap: 8 }}>
         <h2>💡 Suggested bets</h2>
         {data && !loading ? (
           <span className="muted" style={{ marginLeft: 8 }}>
+            {scope ? `${scope} · ` : ''}
             {data.predictions.length} games · {live.length} live
-            {savedAt ? ` · saved ${new Date(savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+            {at ? ` · ${data.restored ? 'from' : 'saved'} ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
           </span>
         ) : null}
-        <button type="button" className="btn ghost" style={{ marginLeft: 'auto', padding: '4px 10px' }} onClick={onClose}>
-          Close
-        </button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {runs.length ? (
+            <select
+              className="mini-select"
+              aria-label="Previous suggestion runs"
+              title="Load an earlier run"
+              value={data?.runId && runs.some((r) => r.id === data.runId) ? data.runId : ''}
+              onChange={(e) => e.target.value && onLoadRun?.(e.target.value)}
+              disabled={loading}
+            >
+              {!data?.runId || !runs.some((r) => r.id === data.runId) ? <option value="">Previous runs…</option> : null}
+              {runs.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {runLabel(r)}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          {onRerun ? (
+            <button type="button" className="btn" style={{ padding: '4px 10px' }} onClick={onRerun} disabled={loading}>
+              ↻ Run again
+            </button>
+          ) : null}
+          <button type="button" className="btn ghost" style={{ padding: '4px 10px' }} onClick={onClose}>
+            Close
+          </button>
+        </div>
       </div>
       <div className="panel-body">
+        {data?.restored && !loading && !error ? (
+          <div className="restored-note">
+            Saved run from{' '}
+            <strong>
+              {at?.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+            </strong>{' '}
+            ({data.sport}, {scope}, {data.risk}). Scores, minutes and prices are as they were then — <em>Full analysis</em> fetches
+            a fresh one, and <em>Run again</em> builds new suggestions.
+          </div>
+        ) : null}
         {loading ? (
           <div className="loading-box">
             <span className="spinner" />
@@ -138,7 +191,13 @@ export function SuggestedBets({ data, loading, error, savedAt, savedKeys, onTogg
           </div>
         ) : !data?.predictions?.length ? (
           <div className="empty">
-            <p>No priced games in this window. Try a wider window or another sport.</p>
+            <h3>Nothing to suggest{scope ? ` for “${scope}”` : ''}</h3>
+            <p>
+              {data?.scope === 'live'
+                ? 'No game with bookmaker prices is being played right now. Try “Live + next 12h” or an upcoming window.'
+                : 'No game with bookmaker prices in this window. Try a wider window, “Live now”, or another sport.'}
+              {data?.skippedUnpriced ? ` (${data.skippedUnpriced} game${data.skippedUnpriced === 1 ? '' : 's'} had no odds.)` : ''}
+            </p>
           </div>
         ) : (
           <>

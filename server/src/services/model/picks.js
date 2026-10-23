@@ -445,8 +445,14 @@ export function confidenceFor(candidateItem, { model, market }) {
   const p = candidateItem.probability;
   let conf = 30 + (p - 0.5) * 95; // 0.5 → 30, 0.9 → 68
 
+  // `market` / `market-loose` are the levels a model fitted to bookmaker odds
+  // reports. They were missing here, so a model that reproduced the book to
+  // within 1pp fell through to the "no data at all" penalty. A tight market fit
+  // is good evidence for the probability itself (the market is the best public
+  // predictor), though it adds nothing independent of the book.
+  const QUALITY_SCORE = { high: 14, medium: 7, market: 8, 'market-loose': -4, low: -4, partial: -12, none: -18 };
   const quality = model?.dataQuality?.level;
-  conf += quality === 'high' ? 14 : quality === 'medium' ? 7 : quality === 'low' ? -4 : quality === 'partial' ? -12 : -18;
+  conf += QUALITY_SCORE[quality] ?? -18;
 
   // Only a COMPARABLE market earns the agreement bonus: a stale pre-match price
   // on a live game has a probability but no edge, and agreeing with a price

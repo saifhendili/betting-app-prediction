@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { savedStore, useSaved } from '../storage.js';
-import { pct, odds, clockTime, dayLabel } from '../format.js';
+import { pct, odds, clockTime, dayLabel, scopeLabel } from '../format.js';
 
 const when = (iso) =>
   new Date(iso).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -60,7 +60,7 @@ function SavedPick({ entry, onOpen }) {
   );
 }
 
-function SavedRun({ run, onOpen }) {
+function SavedRun({ run, onOpen, onShow }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="saved-run">
@@ -68,6 +68,7 @@ function SavedRun({ run, onOpen }) {
         <span>{open ? '▾' : '▸'}</span>
         <strong>{when(run.savedAt)}</strong>
         <span className="chip">{run.sport}</span>
+        {run.window ? <span className="chip">{scopeLabel(run.window)}</span> : null}
         <span className="chip">{run.risk}</span>
         <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>
           {run.items.length} games{run.liveCount ? ` · ${run.liveCount} live` : ''}
@@ -103,7 +104,14 @@ function SavedRun({ run, onOpen }) {
               </div>
             </div>
           ))}
-          <div style={{ textAlign: 'right', marginTop: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+            {onShow ? (
+              <button type="button" className="link-btn" onClick={() => onShow(run.id)}>
+                Show in Suggested bets →
+              </button>
+            ) : (
+              <span />
+            )}
             <button type="button" className="link-btn danger" onClick={() => savedStore.removeRun(run.id)}>
               Delete this run
             </button>
@@ -114,7 +122,7 @@ function SavedRun({ run, onOpen }) {
   );
 }
 
-export function SavedPanel({ onClose, onOpenGame }) {
+export function SavedPanel({ onClose, onOpenGame, onShowRun }) {
   const { runs, picks } = useSaved();
   const [tab, setTab] = useState(picks.length || !runs.length ? 'picks' : 'runs');
 
@@ -156,7 +164,21 @@ export function SavedPanel({ onClose, onOpenGame }) {
               </div>
             )
           ) : runs.length ? (
-            runs.map((r) => <SavedRun key={r.id} run={r} onOpen={open} />)
+            runs.map((r) => (
+              <SavedRun
+                key={r.id}
+                run={r}
+                onOpen={open}
+                onShow={
+                  onShowRun
+                    ? (id) => {
+                        onShowRun(id);
+                        onClose();
+                      }
+                    : null
+                }
+              />
+            ))
           ) : (
             <div className="empty">
               <div className="icon">💡</div>

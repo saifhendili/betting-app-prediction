@@ -86,7 +86,10 @@ predictionsRouter.get('/top', async (req, res, next) => {
     const unpriced = pool.filter((g) => g.hasOdds === false).length;
     pool = pool.filter((g) => g.hasOdds !== false);
 
-    const liveGames = pool.filter((g) => g.state === 'live').sort(byTierThenKickoff);
+    // `live=false` means upcoming ONLY: day windows list games in progress too,
+    // so they must be dropped here, not just given zero reserved slots (the
+    // top-up below would otherwise pull them straight back in).
+    const liveGames = includeLive ? pool.filter((g) => g.state === 'live').sort(byTierThenKickoff) : [];
     const upcomingGames = pool.filter((g) => g.state === 'upcoming').sort(byTierThenKickoff);
 
     const liveSlots = includeLive ? Math.min(liveGames.length, windowKey === 'live' ? count : Math.ceil(count / 2)) : 0;
@@ -125,6 +128,7 @@ predictionsRouter.get('/top', async (req, res, next) => {
       sport,
       risk,
       window: slate.window,
+      scope: { window: windowKey, includeLive },
       requested: shortlist.length,
       slateSize: slate.counts.total,
       liveCount: predictions.filter((p) => p.game.state === 'live').length,

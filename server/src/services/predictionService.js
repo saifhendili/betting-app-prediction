@@ -67,7 +67,10 @@ export async function predict({
   const cacheKey = `pred:v4:${sport}:${gameId}:${profile}:${game.state}${scoreKey}`;
   if (!refresh) {
     const hit = await cacheGet(cacheKey);
-    if (hit) return { ...hit, cached: true };
+    // The analysis can be reused, but the game itself must be current: a cached
+    // payload otherwise carries the countdown / live minute from when it was
+    // first computed ("kicks off in 183 min" inside a 3-hour window).
+    if (hit) return { ...hit, game, cached: true };
   }
 
   // ── gather inputs (all optional except the game itself) ──────────────────

@@ -155,12 +155,18 @@ echk "live football: in-play odds"      "/api/predictions/football/soccer.9001?r
 echk "live football: 27' left"          "/api/predictions/football/soccer.9001?risk=mid" "d['model']['live']['remainingMinutes']==27"
 echk "upcoming: fitted to the market"   "/api/predictions/football/soccer.9002?risk=easy" "d['model']['source']=='market-implied' and d['dataSource']['marketKind']=='prematch' and d['model']['fit']['residual']<3"
 echk "no odds → priors-only, flagged"   "/api/predictions/football/soccer.9003?risk=mid" "d['dataSource']['model']=='priors-only' and d['confidence']<=30"
+echk "market fit not scored as no-data"  "/api/predictions/football/soccer.9002?risk=easy" "d['model']['dataQuality']['level']=='market' and d['confidence']>45"
 echk "NBA live: Q3 5:00 → 17' left"     "/api/predictions/basketball/nba.9101?risk=mid" "d['model']['live']['remainingMinutes']==17 and d['dataSource']['liveOdds']"
 echk "NBA lines are half-points"        "/api/predictions/basketball/nba.9102?risk=mid" "all(abs(float(k)%1-0.5)<1e-9 for k in d['model']['totals'])"
 echk "NHL live: P2 10:00 → 30' left"    "/api/predictions/hockey/nhl.9201?risk=aggressive" "d['model']['live']['remainingMinutes']==30"
 echk "suggestions include live games"   "/api/predictions/top?sport=football&window=12h&count=5" "d['liveCount']>=1 and any(p['game']['state']=='live' for p in d['predictions'])"
 echk "suggestions skip unpriced games"  "/api/predictions/top?sport=football&window=12h&count=5" "d['skippedUnpriced']>=2 and all(p['game']['hasOdds'] and p['game']['source']=='espn' for p in d['predictions'])"
 echk "suggestions: all sports"          "/api/predictions/top?sport=all&window=24h&count=6" "len({p['sport'] for p in d['predictions']})==3"
+echk "scope live: live games only"      "/api/predictions/top?sport=all&window=live&live=true&count=6" "d['predictions'] and all(p['game']['state']=='live' for p in d['predictions'])"
+echk "scope 1h: upcoming within 60 min" "/api/predictions/top?sport=all&window=1h&live=false&count=6" "d['predictions'] and all(p['game']['state']=='upcoming' and p['game']['startsInMinutes']<=60 for p in d['predictions'])"
+echk "scope 3h: none live, all ≤180 min" "/api/predictions/top?sport=all&window=3h&live=false&count=6" "d['predictions'] and all(p['game']['state']=='upcoming' and p['game']['startsInMinutes']<=180 for p in d['predictions'])"
+echk "scope today, live=false: no live" "/api/predictions/top?sport=all&window=24h&live=false&count=6" "d['predictions'] and not any(p['game']['state']=='live' for p in d['predictions'])"
+echk "scope mix: live + upcoming"       "/api/predictions/top?sport=all&window=12h&live=true&count=6" "{p['game']['state'] for p in d['predictions']}=={'live','upcoming'}"
 kill "$ESPN_SRV" 2>/dev/null
 
 echo "── fallback: API-SPORTS key suspended → ESPN"
