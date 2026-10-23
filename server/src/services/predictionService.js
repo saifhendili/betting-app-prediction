@@ -216,7 +216,7 @@ export async function predict({
         modelSource === 'market-implied' && marketKind !== 'inplay'
           ? 'No team statistics are available from the data source, so these probabilities are the bookmaker\'s own view, re-fitted into a full scoring model. That makes every market consistent and fills in lines the book did not price — but it cannot disagree with the market, so no genuine value edge is available pre-match.'
           : modelSource === 'priors-only'
-            ? 'No bookmaker prices this fixture (typical for friendlies and minor leagues) and no team statistics are available, so the model is running on generic league averages. Treat this prediction as near-worthless.'
+            ? 'No odds are available for this fixture — either no bookmaker prices it (friendlies, youth and minor leagues), or it comes from the wider-coverage feed, which carries scores but no prices — and there are no team statistics, so the model is running on generic league averages. Treat this prediction as near-worthless.'
             : null,
       planRestrictions: planRestrictions(),
     },

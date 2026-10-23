@@ -55,8 +55,19 @@ const TIERS = [
       { name: /^acb$|^liga endesa$/i },
       { name: /^ncaa/i },
       { name: /^(lnb|bbl|vtb|lega a)$/i },
-      { name: /^khl$/i },
-      { name: /^(liiga|shl|del|extraliga)$/i },
+      { name: /\bkhl\b/i },
+      { name: /^(finnish )?liiga$/i },
+      { name: /^(swedish hockey league|shl)$/i },
+      { name: /^(german )?del$/i },
+      { name: /^(czech |slovak )?extraliga$/i },
+      { name: /^swiss national league$/i },
+      { name: /^(american )?ahl$/i },
+      { name: /liga acb|^(spanish )?acb$/i },
+      { name: /lega basket/i },
+      { name: /lnb pro a/i },
+      { name: /^chinese cba$/i },
+      { name: /b1 league/i },
+      { name: /^(australian )?nbl$/i },
       { name: /^wnba$/i },
       { name: /eurocup/i },
     ],
@@ -98,7 +109,11 @@ export function leagueTier(name = '', country = '') {
   return tier;
 }
 
-/** Live first, then by competition importance, then by kickoff. */
+// Games with bookmaker prices get real predictions; at equal importance they
+// are the more useful ones to see first.
+const priced = (g) => (g.hasOdds === false ? 1 : 0);
+
+/** Live first, then by competition importance, then priced games, then kickoff. */
 export function sortGames(games) {
   const stateRank = { live: 0, upcoming: 1, finished: 2 };
   return [...games].sort((a, b) => {
@@ -110,12 +125,14 @@ export function sortGames(games) {
       const tb = leagueTier(b.league.name, b.league.country);
       // within the same ~3h slot, show the bigger competition first
       if (Math.abs(t) < 3 * 3600 * 1000 && ta !== tb) return ta - tb;
+      if (Math.abs(t) < 3 * 3600 * 1000 && priced(a) !== priced(b)) return priced(a) - priced(b);
       if (t) return t;
       return ta - tb;
     }
     const ta = leagueTier(a.league.name, a.league.country);
     const tb = leagueTier(b.league.name, b.league.country);
     if (ta !== tb) return ta - tb;
+    if (priced(a) !== priced(b)) return priced(a) - priced(b);
     return new Date(a.kickoff || 0) - new Date(b.kickoff || 0);
   });
 }

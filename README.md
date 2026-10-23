@@ -91,13 +91,29 @@ For production, see **Hosting** below — one process serves both the UI and the
 
 ## Data sources
 
-| | ESPN (default) | API-SPORTS (optional) |
-|---|---|---|
-| Key | none | required |
-| Limits | none | free plan: 100 requests/day, 10/minute |
-| Coverage | football worldwide, NBA, WNBA, NCAA men's basketball, NHL | football, basketball and hockey worldwide |
-| Odds | DraftKings, on every fixture they price, **including live in-play prices** | many books, pre-match only |
-| Team statistics | no | paid plans only (the free plan blocks the current season) |
+| | ESPN (default) | + TheSportsDB (merged in) | API-SPORTS (optional) |
+|---|---|---|---|
+| Key | none | published free key | required |
+| Limits | none | generous free tier | free plan: 100 requests/day, 10/minute |
+| Coverage | ~50 football leagues on a given day (220 catalogued), NBA, WNBA, NCAA, NHL | many more: Asia, Eastern Europe, second divisions; EuroLeague, CBA, B1, DEL, SHL, Swiss NL… | ~1,100 leagues |
+| Odds | DraftKings, **including live in-play prices** | none (scores only) | many books, pre-match on the free plan |
+| Team statistics | no | no | paid plans only |
+
+By default the app lists **ESPN and TheSportsDB together**: ESPN supplies every fixture it covers
+(those carry odds), and TheSportsDB adds the ones ESPN lacks. The same match in both feeds is merged
+into one — team names are compared on their distinctive words, so "AFC Bournemouth" and "Bournemouth"
+or "Lillestrøm" and "Lillestrom" line up, while Real Madrid and Real Betis don't — and entries stuck
+"in play" for hours after kick-off are dropped. Measured on a Friday midday: **1 → 10 live football
+games, 1 → 53 basketball and 0 → 83 hockey games for the day.** Set `ENABLE_TSDB=false` to turn it
+off.
+
+TheSportsDB games show live scores and get an in-play prediction, but with no odds and no team
+statistics it is a league-average one, clearly labelled, and Suggested bets skips them. Within a
+competition tier, priced games sort first.
+
+Even merged, this is not every match on earth: sites like Flashscore track well over a thousand
+competitions. A paid API-SPORTS plan (~1,100 leagues, with odds) is the step up if you need that —
+the app switches to it from Settings.
 
 ESPN's scoreboard is ESPN's own site API rather than a documented public product. It has been stable
 for years, but it can change without notice — which is one reason API-SPORTS is kept as an option.

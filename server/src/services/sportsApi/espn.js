@@ -117,7 +117,7 @@ const SOCCER_ALIASES = [
   [/sudamericana/i, 'Copa Sudamericana', 'World'],
 ];
 
-function canonicalLeague(name) {
+export function canonicalLeague(name) {
   const hit = SOCCER_ALIASES.find(([re]) => re.test(String(name || '').trim()));
   return hit ? { name: hit[1], country: hit[2] } : null;
 }

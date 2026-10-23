@@ -263,6 +263,12 @@ globalThis.fetch = async (input, init) => {
     return json(wrap([]));
   }
 
+  // ── TheSportsDB ──
+  if (url.includes('thesportsdb.com')) {
+    const sport = new URL(url).searchParams.get('s');
+    return jsonNoHeaders({ livescore: tsdbFeed(sport) });
+  }
+
   // ── ESPN ──
   if (url.includes('site.api.espn.com')) {
     const path = new URL(url).pathname.replace('/apis/site/v2/sports/', '').replace(/\/scoreboard$/, '');
@@ -271,6 +277,25 @@ globalThis.fetch = async (input, init) => {
 
   return realFetch(input, init);
 };
+
+// ── canned TheSportsDB live feed ────────────────────────────────────────────
+// One game ESPN doesn't have, one ESPN DOES have under different spellings
+// (must be merged away), and one stuck "in play" since yesterday (must be
+// filtered out as stale).
+const tsdbTs = (mins) => new Date(now + mins * 60000).toISOString().slice(0, 19); // UTC, no zone — as the real feed
+function tsdbFeed(sport) {
+  if (sport === 'Soccer') {
+    return [
+      { idEvent: '700001', strHomeTeam: 'Dynamo Kyiv', strAwayTeam: 'Kudrivka', intHomeScore: '1', intAwayScore: '0', strStatus: '2H', strProgress: '58', strLeague: 'Ukrainian Premier League', idLeague: '4354', strTimestamp: tsdbTs(-62) },
+      { idEvent: '700002', strHomeTeam: 'Arsenal FC', strAwayTeam: 'Chelsea', intHomeScore: '1', intAwayScore: '0', strStatus: '2H', strProgress: '63', strLeague: 'English Premier League', idLeague: '4328', strTimestamp: tsdbTs(-69) },
+      { idEvent: '700003', strHomeTeam: 'Stuck Town', strAwayTeam: 'Frozen United', intHomeScore: '0', intAwayScore: '0', strStatus: '2H', strProgress: '70', strLeague: 'Nowhere League', idLeague: '1', strTimestamp: tsdbTs(-24 * 60) },
+    ];
+  }
+  if (sport === 'Ice Hockey') {
+    return [{ idEvent: '700101', strHomeTeam: 'Eisbären Berlin', strAwayTeam: 'Adler Mannheim', intHomeScore: null, intAwayScore: null, strStatus: 'NS', strProgress: null, strLeague: 'German DEL', idLeague: '4380', strTimestamp: tsdbTs(90) }];
+  }
+  return [];
+}
 
 // ── canned ESPN scoreboards ─────────────────────────────────────────────────
 // One live and one upcoming priced game per sport, plus an un-priced football

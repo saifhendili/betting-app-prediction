@@ -2,6 +2,8 @@ import * as football from './football.js';
 import * as basketball from './basketball.js';
 import * as hockey from './hockey.js';
 import * as espn from './espn.js';
+import * as tsdb from './tsdb.js';
+import { mergeGames } from './merge.js';
 import { SPORTS, env } from '../../config/env.js';
 import { sportsKeys, NoUsableKeyError } from './client.js';
 import { log } from '../../utils/logger.js';
@@ -27,6 +29,8 @@ export function describeSource() {
   return {
     configured,
     effective,
+    // extra fixtures (no odds) merged into ESPN's listings
+    supplement: effective === 'espn' && env.sports.tsdbEnabled ? 'thesportsdb' : null,
     fellBack: configured === 'apisports' && effective === 'espn',
     reason:
       configured === 'apisports' && effective === 'espn'
@@ -34,6 +38,29 @@ export function describeSource() {
           ? 'No usable API-SPORTS key (exhausted, rate-limited or suspended) — using ESPN instead.'
           : 'No API-SPORTS key configured — using ESPN instead.'
         : null,
+  };
+}
+
+/**
+ * ESPN plus TheSportsDB for listings. ESPN is primary — it has the prices and
+ * the in-play odds — and TheSportsDB only adds fixtures ESPN doesn't cover.
+ * Lookups by id go straight to whichever feed issued the id (see adapter()).
+ */
+function combined(sport) {
+  const primary = espn.forSport(sport);
+  if (!env.sports.tsdbEnabled) return primary;
+  const extra = tsdb.forSport(sport);
+  return {
+    ...primary,
+    source: 'espn+tsdb',
+    async listLive() {
+      const [a, b] = await Promise.all([primary.listLive(), extra.listLive()]);
+      return mergeGames(a, b);
+    },
+    async listByDate(day) {
+      const [a, b] = await Promise.all([primary.listByDate(day), extra.listByDate(day)]);
+      return mergeGames(a, b);
+    },
   };
 }
 
@@ -45,7 +72,7 @@ let warnedFallback = false;
  * only the failure another source can actually fix triggers the hand-over.
  */
 function withEspnFallback(primary, sport) {
-  const fallback = espn.forSport(sport);
+  const fallback = combined(sport);
   return new Proxy(primary, {
     get(target, prop) {
       const fn = target[prop];
@@ -74,9 +101,10 @@ function withEspnFallback(primary, sport) {
 export function adapter(sport, { gameId } = {}) {
   if (!apiSports[sport]) throw new Error(`Unsupported sport "${sport}". Use one of: ${SPORTS.join(', ')}`);
   if (gameId !== undefined && gameId !== null) {
+    if (tsdb.isTsdbId(gameId)) return tsdb.forSport(sport);
     return espn.isEspnId(gameId) ? espn.forSport(sport) : apiSports[sport];
   }
-  return resolveSource() === 'apisports' ? withEspnFallback(apiSports[sport], sport) : espn.forSport(sport);
+  return resolveSource() === 'apisports' ? withEspnFallback(apiSports[sport], sport) : combined(sport);
 }
 
 export { football, basketball, hockey, SPORTS };

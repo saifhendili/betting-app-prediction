@@ -143,8 +143,12 @@ print('OK' if ($pred) else 'FAIL')
   else FAIL=$((FAIL+1)); printf "  \033[31m✗\033[0m %s (%s)\n" "$name" "${out:-no response}"; fi
 }
 echk "health: ESPN, no key needed"     "/api/health" "d['sportsData']=='ok' and d['dataSource']['effective']=='espn'"
-echk "football live from ESPN"          "/api/games?sport=football&window=live" "len(d['games'])==1 and d['games'][0]['id']=='soccer.9001' and d['games'][0]['source']=='espn'"
-echk "live minute computed (63')"       "/api/games?sport=football&window=live" "abs(d['games'][0]['status']['elapsedMinutes']-63)<0.01"
+echk "football live: ESPN + TheSportsDB" "/api/games?sport=football&window=live" "sorted(g['id'] for g in d['games'])==['soccer.9001','tsdb.700001']"
+echk "duplicate across feeds merged"    "/api/games?sport=football&window=live" "not any(g['id']=='tsdb.700002' for g in d['games'])"
+echk "stuck 'live' entry filtered"      "/api/games?sport=football&window=live" "not any(g['id']=='tsdb.700003' for g in d['games'])"
+echk "TheSportsDB adds hockey leagues"   "/api/games?sport=hockey&window=24h" "any(g['source']=='tsdb' and g['league']['name']=='German DEL' and g['league']['tier']==2 for g in d['games'])"
+echk "TheSportsDB game predicts (no odds)" "/api/predictions/football/tsdb.700001?risk=mid" "d['dataSource']['feed']=='tsdb' and d['dataSource']['model']=='priors-only' and d['model']['live']['remainingMinutes']==32"
+echk "live minute computed (63')"       "/api/games?sport=football&window=live" "abs(next(g for g in d['games'] if g['id']=='soccer.9001')['status']['elapsedMinutes']-63)<0.01"
 echk "unpriced fixture flagged"         "/api/games?sport=football&window=24h" "any(g['id']=='soccer.9003' and g['hasOdds'] is False for g in d['games'])"
 echk "league alias → tier 1 EPL"        "/api/games?sport=football&window=24h" "any(g['league']['name']=='Premier League' and g['league']['tier']==1 for g in d['games'])"
 echk "live football: in-play odds"      "/api/predictions/football/soccer.9001?risk=mid" "d['dataSource']['marketKind']=='inplay' and d['dataSource']['provider']=='DraftKings'"
@@ -155,7 +159,7 @@ echk "NBA live: Q3 5:00 → 17' left"     "/api/predictions/basketball/nba.9101?
 echk "NBA lines are half-points"        "/api/predictions/basketball/nba.9102?risk=mid" "all(abs(float(k)%1-0.5)<1e-9 for k in d['model']['totals'])"
 echk "NHL live: P2 10:00 → 30' left"    "/api/predictions/hockey/nhl.9201?risk=aggressive" "d['model']['live']['remainingMinutes']==30"
 echk "suggestions include live games"   "/api/predictions/top?sport=football&window=12h&count=5" "d['liveCount']>=1 and any(p['game']['state']=='live' for p in d['predictions'])"
-echk "suggestions skip unpriced games"  "/api/predictions/top?sport=football&window=12h&count=5" "d['skippedUnpriced']>=1 and all(p['game']['hasOdds'] for p in d['predictions'])"
+echk "suggestions skip unpriced games"  "/api/predictions/top?sport=football&window=12h&count=5" "d['skippedUnpriced']>=2 and all(p['game']['hasOdds'] and p['game']['source']=='espn' for p in d['predictions'])"
 echk "suggestions: all sports"          "/api/predictions/top?sport=all&window=24h&count=6" "len({p['sport'] for p in d['predictions']})==3"
 kill "$ESPN_SRV" 2>/dev/null
 

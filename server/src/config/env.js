@@ -44,6 +44,11 @@ export const env = {
     //               including in-play prices. The default.
     // 'apisports' — API-SPORTS (key required). Falls back to ESPN automatically
     //               when no key is usable (missing, exhausted or suspended).
+    // TheSportsDB fills in fixtures ESPN doesn't cover (it tracks ~50 leagues on
+    // a given day; TheSportsDB far more, especially basketball and hockey).
+    // '123' is its published free key; a Patreon key raises the limits.
+    tsdbKey: (process.env.TSDB_KEY || '123').trim(),
+    tsdbEnabled: String(process.env.ENABLE_TSDB ?? 'true') !== 'false',
     dataSource: ['espn', 'apisports'].includes(String(process.env.DATA_SOURCE || '').toLowerCase())
       ? String(process.env.DATA_SOURCE).toLowerCase()
       : 'espn',
